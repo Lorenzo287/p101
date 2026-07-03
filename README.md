@@ -55,16 +55,16 @@ source files. Program files use the ASCII substitutes below.
 
 ![Olivetti Programma 101 keyboard layout](images/P101-KB-layout.jpg)
 
-| Source token | Also accepted | Keyboard role |
-| ------------ | ------------- | ------------- |
-| `<M`         | `<`           | transfer from `M` |
-| `>A`         | `>`           | transfer to `A` |
-| `><`         | `><A`         | exchange key |
+| Source token | Also accepted | Keyboard role                                |
+| ------------ | ------------- | -------------------------------------------- |
+| `<M`         | `<`           | transfer from `M`                            |
+| `>A`         | `>`           | transfer to `A`                              |
+| `><`         | `><A`         | exchange key                                 |
 | `#`          |               | print key; with `/`, emits a blank tape line |
-| `*`          |               | clear key; in literal mode, digit `9` |
-| `x`          |               | multiply key |
-| `:`          |               | divide key |
-| `sqrt`       |               | square-root key |
+| `*`          |               | clear key; in literal mode, digit `9`        |
+| `x`          |               | multiply key                                 |
+| `:`          |               | divide key                                   |
+| `sqrt`       |               | square-root key                              |
 
 ## Registers And Context
 
@@ -72,15 +72,27 @@ Registers are `M`, `A`, `R`, `B`, `B/`, `C`, `C/`, `D`, `D/`, `E`, `E/`,
 `F`, and `F/`. Lowercase `b` through `f` are accepted as one-letter aliases
 for the split registers `B/` through `F/`.
 
+In strict mode, `B` through `F` follow the hardware overlay. Each starts as a
+22-digit whole register. A slash access splits it into two 11-digit halves:
+`B/` is the left half and `B` is the right half. Splitting a whole register
+that currently holds more than 11 digits is an error.
+
+The clear key controls transitions between the two views. `B/ *` clears the
+left half and makes `B` available again as a whole register, keeping the right
+half as the current value. `B *` clears the whole register when `B` is unsplit,
+or the right half when it is split. The same rule applies to `C`, `D`, `E`,
+and `F`. If an instruction-overflow slot occupies one half of `D`, `E`, or
+`F`, only the other half can be used for data.
+
 Routine keys are `V`, `W`, `Y`, and `Z`. The same symbol can change meaning
 based on the full chord:
 
-| Context | Example |
-| ------- | ------- |
-| Register prefix | `D +` means add register `D` to `A` |
-| Jump or label family | `D V` jumps to `E V`, while `A V` defines label `A V` |
-| Special operation | `A ><` means absolute value, `/ ><` extracts the decimal part |
-| Literal mode | after `A/ <M`, keys such as `S`, `>A`, and `*` become digits |
+| Context              | Example                                                       |
+| -------------------- | ------------------------------------------------------------- |
+| Register prefix      | `D +` means add register `D` to `A`                           |
+| Jump or label family | `D V` jumps to `E V`, while `A V` defines label `A V`         |
+| Special operation    | `A ><` means absolute value, `/ ><` extracts the decimal part |
+| Literal mode         | after `A/ <M`, keys such as `S`, `>A`, and `*` become digits  |
 
 ## Command Reference
 
@@ -95,16 +107,16 @@ Let `KEY` be one of `V`, `W`, `Y`, or `Z`. Reference points are labels:
 `F/ KEY`. The command-line entry point `--start V` starts at `A V`,
 `--start W` starts at `A W`, and so on.
 
-| Jump form | Target label |
-| --------- | ------------ |
-| `KEY` | `A KEY` |
-| `C KEY` | `B KEY` |
-| `D KEY` | `E KEY` |
-| `R KEY` | `F KEY` |
-| `/ KEY` | `A/ KEY`, only if `A > 0` |
-| `C/ KEY` | `B/ KEY`, only if `A > 0` |
-| `D/ KEY` | `E/ KEY`, only if `A > 0` |
-| `R/ KEY` | `F/ KEY`, only if `A > 0` |
+| Jump form | Target label              |
+| --------- | ------------------------- |
+| `KEY`     | `A KEY`                   |
+| `C KEY`   | `B KEY`                   |
+| `D KEY`   | `E KEY`                   |
+| `R KEY`   | `F KEY`                   |
+| `/ KEY`   | `A/ KEY`, only if `A > 0` |
+| `C/ KEY`  | `B/ KEY`, only if `A > 0` |
+| `D/ KEY`  | `E/ KEY`, only if `A > 0` |
+| `R/ KEY`  | `F/ KEY`, only if `A > 0` |
 
 ### Data Movement And Service Keys
 
@@ -149,13 +161,13 @@ the sequence. The following key chords are decoded as digits and stored in
 Digits are entered from least significant to most significant. The terminating
 `D` or `E` chord contains the leftmost digit and determines the final sign.
 
-| Digit | Literal key | Digit | Literal key |
-| ----- | ----------- | ----- | ----------- |
-| `0` | `S` | `5` | `-` |
-| `1` | `>A` or `>` | `6` | `x` |
-| `2` | `<M` or `<` | `7` | `:` |
-| `3` | `><A` or `><` | `8` | `#` |
-| `4` | `+` | `9` | `*` |
+| Digit | Literal key   | Digit | Literal key |
+| ----- | ------------- | ----- | ----------- |
+| `0`   | `S`           | `5`   | `-`         |
+| `1`   | `>A` or `>`   | `6`   | `x`         |
+| `2`   | `<M` or `<`   | `7`   | `:`         |
+| `3`   | `><A` or `><` | `8`   | `#`         |
+| `4`   | `+`           | `9`   | `*`         |
 
 | Prefix      | Meaning in literal mode                                              |
 | ----------- | -------------------------------------------------------------------- |
@@ -167,11 +179,11 @@ Digits are entered from least significant to most significant. The terminating
 A slash in the prefix marks the decimal point after that digit in the final
 number.
 
-| Constant | Literal sequence |
-| -------- | ---------------- |
-| `1`      | `A/ <M`<br>`D/ >A` |
+| Constant | Literal sequence                      |
+| -------- | ------------------------------------- |
+| `1`      | `A/ <M`<br>`D/ >A`                    |
 | `12.5`   | `A/ <M`<br>`R -`<br>`R/ <M`<br>`D >A` |
-| `-12`    | `A/ <M`<br>`F <M`<br>`E >A` |
+| `-12`    | `A/ <M`<br>`F <M`<br>`E >A`           |
 
 ## Directives
 
@@ -188,13 +200,13 @@ use either `.` or `,` as the decimal separator.
   default is `V`.
 - `--input FILE`: read `S` input values from a file.
 - `--trace`: print executed instructions to stderr.
+- `--relaxed`: disable hardware memory, register-overlay, and digit-capacity
+  checks for modern exploratory listings.
 
-## Current Limitations
-
-- No magnetic-card import/export yet.
-- No instruction/data sharing inside `D`, `E`, and `F` yet.
-- Register capacity checks are not strict enough for real hardware fidelity.
-- Square-root remainder behavior is approximate.
+By default the interpreter enforces the P101 internal program layout: 48 core
+instruction slots, then overflow into `F`, `F/`, `E`, `E/`, `D`, and `D/`,
+for 120 instructions total. Register halves occupied by instructions cannot
+also be used as data.
 
 ## References
 

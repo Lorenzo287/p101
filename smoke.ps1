@@ -31,19 +31,121 @@ function Assert-Matches {
     }
 }
 
+function Invoke-P101Failure {
+    param(
+        [string[]]$InputValues,
+        [string[]]$ArgsList,
+        [string]$Pattern,
+        [string]$Name
+    )
+
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = $InputValues | & $Exe @ArgsList 2>&1
+    } finally {
+        $ErrorActionPreference = $oldPreference
+    }
+    $text = ($output | Out-String)
+    if ($LASTEXITCODE -eq 0) {
+        throw "$Name failed. Expected p101 to fail for $($ArgsList -join ' ')"
+    }
+    if ($text -notmatch $Pattern) {
+        throw "$Name failed. Expected pattern: $Pattern`nActual:`n$text"
+    }
+}
+
 $factorial = Invoke-P101 -InputValues @("5") -ArgsList @("examples/factorial.p101")
 Assert-Matches $factorial "D\s+120" "factorial"
 
 $prime = Invoke-P101 -InputValues @("120") -ArgsList @("examples/prime_factors.p101")
 Assert-Matches $prime "C\s+2[\s\S]*C\s+2[\s\S]*C\s+2[\s\S]*C\s+3[\s\S]*B\s+5" "prime factors"
 
-$sine = Invoke-P101 -InputValues @("30") -ArgsList @("examples/sine_cosine.p101")
+$sine = Invoke-P101 -InputValues @("30") -ArgsList @("--relaxed", "examples/sine_cosine.p101")
 Assert-Matches $sine "F\s+0,4999999999" "sine"
 
-$cosine = Invoke-P101 -InputValues @("30") -ArgsList @("--start", "W", "examples/sine_cosine.p101")
+$cosine = Invoke-P101 -InputValues @("30") -ArgsList @("--relaxed", "--start", "W", "examples/sine_cosine.p101")
 Assert-Matches $cosine "F\s+0,8660254039" "cosine"
 
-$cubic = Invoke-P101 -InputValues @("27") -ArgsList @("examples/cubic_root.p101")
+$cubic = Invoke-P101 -InputValues @("27") -ArgsList @("--relaxed", "examples/cubic_root.p101")
 Assert-Matches $cubic "C\s+2,9999999998" "cubic root"
+
+$Tmp = Join-Path $Root ".smoke_tmp"
+if (Test-Path $Tmp) {
+    Remove-Item -Recurse -Force $Tmp
+}
+New-Item -ItemType Directory -Path $Tmp | Out-Null
+
+$sqrt = Join-Path $Tmp "sqrt2.p101"
+@"
+.decimals 15
+A V
+  S
+B <M
+B sqrt
+A #
+"@ | Set-Content -NoNewline -Encoding ascii $sqrt
+$sqrtOutput = Invoke-P101 -InputValues @("2") -ArgsList @($sqrt)
+Assert-Matches $sqrtOutput "A\s+1,414213562373095" "integer sqrt"
+
+$splitOverflow = Join-Path $Tmp "split-overflow.p101"
+@"
+.set B/ 123456789012
+A V
+  S
+"@ | Set-Content -NoNewline -Encoding ascii $splitOverflow
+Invoke-P101Failure -InputValues @("") -ArgsList @($splitOverflow) `
+    -Pattern "register B/ capacity exceeded" -Name "split capacity"
+
+$splitWhole = Join-Path $Tmp "split-whole-overflow.p101"
+@"
+A V
+  S
+B <M
+B/ #
+"@ | Set-Content -NoNewline -Encoding ascii $splitWhole
+Invoke-P101Failure -InputValues @("123456789012") -ArgsList @($splitWhole) `
+    -Pattern "cannot split register B" -Name "split whole-register overflow"
+
+$rightHalfOverflow = Join-Path $Tmp "right-half-overflow.p101"
+@"
+.set B/ 1
+A V
+  S
+B <M
+"@ | Set-Content -NoNewline -Encoding ascii $rightHalfOverflow
+Invoke-P101Failure -InputValues @("123456789012") -ArgsList @($rightHalfOverflow) `
+    -Pattern "register B capacity exceeded" -Name "right half capacity"
+
+$overlay = Join-Path $Tmp "overlay-clear.p101"
+@"
+.decimals 0
+.set B 7
+.set B/ 3
+A V
+B #
+B/ #
+B/ *
+  S
+B <M
+B #
+"@ | Set-Content -NoNewline -Encoding ascii $overlay
+$overlayOutput = Invoke-P101 -InputValues @("123456789012") -ArgsList @($overlay)
+Assert-Matches $overlayOutput "B\s+7[\s\S]*B/\s+3[\s\S]*B\s+123456789012" "register overlay clear"
+
+$tooLong = Join-Path $Tmp "too-long.p101"
+1..121 | ForEach-Object { "A V" } | Set-Content -Encoding ascii $tooLong
+Invoke-P101Failure -InputValues @("") -ArgsList @($tooLong) `
+    -Pattern "too many instructions for P101 memory" -Name "instruction capacity"
+
+$occupied = Join-Path $Tmp "occupied-f.p101"
+$lines = @("A V")
+1..47 | ForEach-Object { $lines += "/ #" }
+$lines += "F #"
+$lines | Set-Content -Encoding ascii $occupied
+Invoke-P101Failure -InputValues @("") -ArgsList @($occupied) `
+    -Pattern "register F is occupied by program instructions" -Name "instruction data sharing"
+
+Remove-Item -Recurse -Force $Tmp
 
 Write-Host "Smoke tests passed."

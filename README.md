@@ -86,6 +86,7 @@ D/E prefixes terminate the literal. A slash in the prefix marks the decimal.
 - Register capacity checks are not strict enough for real hardware fidelity.
 - Square-root remainder behavior is approximate.
 
-http://www.claudiolarini.altervista.org/emul2.htm
-https://web.archive.org/web/20160304184208/http://www.marcogaleotti.com/P101Simulator.html
-https://ub.fnwi.uva.nl/computermuseum/p101emul.html
+# References
+- [emulator by Claudio Larini](http://www.claudiolarini.altervista.org/emul2.html)
+- [simulator by Marco Galeotti](https://web.archive.org/web/20160304184208/http://www.marcogaleotti.com/P101Simulator.html)
+- [emulator by the Univeristy of Amsterdam](https://ub.fnwi.uva.nl/computermuseum/p101emul.html)

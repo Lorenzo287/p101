@@ -5,6 +5,7 @@ The program body uses P101 key-chord notation so listings stay close to the
 machine keyboard. 
 
 ![](images/Garziera.jpg)
+> instructions written by Gastone Garziera.
 
 Options:
 

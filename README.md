@@ -85,14 +85,11 @@ and `F`. If an instruction-overflow slot occupies one half of `D`, `E`, or
 `F`, only the other half can be used for data.
 
 Routine keys are `V`, `W`, `Y`, and `Z`. The same symbol can change meaning
-based on the full chord:
-
-| Context              | Example                                                       |
-| -------------------- | ------------------------------------------------------------- |
-| Register prefix      | `D +` means add register `D` to `A`                           |
-| Jump or label family | `D V` jumps to `E V`, while `A V` defines label `A V`         |
-| Special operation    | `A ><` means absolute value, `/ ><` extracts the decimal part |
-| Literal mode         | after `A/ <M`, keys such as `S`, `>A`, and `*` become digits  |
+based on the full chord. `D +` uses `D` as a register prefix and adds `D` to
+`A`. `D V` is a jump to `E V`, while `A V` defines a reference point. `A ><`
+means absolute value, but `/ ><` extracts the decimal part of `A`. After
+`A/ <M`, keys such as `S`, `>A`, and `*` are literal digits until the
+terminating `D...` or `E...` chord.
 
 ## Command Reference
 
@@ -107,32 +104,25 @@ Let `KEY` be one of `V`, `W`, `Y`, or `Z`. Reference points are labels:
 `F/ KEY`. The command-line entry point `--start V` starts at `A V`,
 `--start W` starts at `A W`, and so on.
 
-| Jump form | Target label              |
-| --------- | ------------------------- |
-| `KEY`     | `A KEY`                   |
-| `C KEY`   | `B KEY`                   |
-| `D KEY`   | `E KEY`                   |
-| `R KEY`   | `F KEY`                   |
-| `/ KEY`   | `A/ KEY`, only if `A > 0` |
-| `C/ KEY`  | `B/ KEY`, only if `A > 0` |
-| `D/ KEY`  | `E/ KEY`, only if `A > 0` |
-| `R/ KEY`  | `F/ KEY`, only if `A > 0` |
+Unconditional jumps are written as `KEY`, `C KEY`, `D KEY`, or `R KEY`;
+they target `A KEY`, `B KEY`, `E KEY`, and `F KEY` respectively.
+
+Conditional jumps use the slash forms `/ KEY`, `C/ KEY`, `D/ KEY`, and
+`R/ KEY`. They jump only when `A > 0`, targeting `A/ KEY`, `B/ KEY`,
+`E/ KEY`, and `F/ KEY` respectively. If `A <= 0`, execution continues with
+the next instruction.
 
 ### Data Movement And Service Keys
 
-| Form     | Meaning                                             |
-| -------- | --------------------------------------------------- |
-| `S`      | stop and read the next input value into `M`         |
-| `R S`    | exchange `D` and `R`                                |
-| `REG <M` | copy `M` into `REG`                                 |
-| `REG >A` | copy `REG` into `A`                                 |
-| `REG ><` | exchange `REG` and `A`; with `R`, copy `R` into `A` |
-| `/ ><`   | copy the decimal part of `A` into `M`               |
-| `A ><`   | replace `A` with its absolute value                 |
-| `REG *`  | clear `REG`                                         |
+`S` stops and reads the next input value into `M`. With `--input FILE`, it
+reads from the file; if there is no more input, the program stops.
 
-With `--input FILE`, `S` reads from the file. If there is no more input, the
-program stops.
+`REG <M` copies `M` into `REG`; `REG >A` copies `REG` into `A`; and
+`REG ><` exchanges `REG` and `A`. The special form `R ><` copies `R` into
+`A` instead of exchanging. `R S` exchanges `D` and `R`.
+
+`REG *` clears a register. `/ ><` copies the decimal part of `A` into `M`.
+`A ><` replaces `A` with its absolute value.
 
 ### Arithmetic And Output
 
@@ -142,15 +132,8 @@ Division stores the quotient in `A` and the remainder in `R`. Square root
 stores `sqrt(REG)` in `A`, the remainder `REG - A * A` in `R`, and `2 * A` in
 `M`.
 
-| Form       | Meaning                 |
-| ---------- | ----------------------- |
-| `REG +`    | `A + REG -> A`          |
-| `REG -`    | `A - REG -> A`          |
-| `REG x`    | `A x REG -> A`          |
-| `REG :`    | `A / REG -> A`          |
-| `REG sqrt` | `sqrt(REG) -> A`        |
-| `REG #`    | print `REG`             |
-| `/ #`      | print a blank tape line |
+The arithmetic forms are `REG +`, `REG -`, `REG x`, `REG :`, and
+`REG sqrt`. `REG #` prints a register, while `/ #` prints a blank tape line.
 
 ## Literal Constants
 
@@ -169,21 +152,34 @@ Digits are entered from least significant to most significant. The terminating
 | `3`   | `><A` or `><` | `8`   | `#`         |
 | `4`   | `+`           | `9`   | `*`         |
 
-| Prefix      | Meaning in literal mode                                              |
-| ----------- | -------------------------------------------------------------------- |
-| `R` or `R/` | continue the literal                                                 |
-| `F` or `F/` | continue the literal; accepted for original negative-number notation |
-| `D` or `D/` | final digit, positive number                                         |
-| `E` or `E/` | final digit, negative number                                         |
+`R` and `R/` continue the literal. `F` and `F/` also continue it, and are
+accepted for the original negative-number notation. `D` or `D/` terminates
+the sequence as a positive number; `E` or `E/` terminates it as a negative
+number. A slash in the prefix marks the decimal point after that digit in the
+final number.
 
-A slash in the prefix marks the decimal point after that digit in the final
-number.
+Examples:
 
-| Constant | Literal sequence                      |
-| -------- | ------------------------------------- |
-| `1`      | `A/ <M`<br>`D/ >A`                    |
-| `12.5`   | `A/ <M`<br>`R -`<br>`R/ <M`<br>`D >A` |
-| `-12`    | `A/ <M`<br>`F <M`<br>`E >A`           |
+```p101
+; 1
+A/ <M
+D/ >A
+```
+
+```p101
+; 12.5
+A/ <M
+R  -
+R/ <M
+D  >A
+```
+
+```p101
+; -12
+A/ <M
+F  <M
+E  >A
+```
 
 ## Directives
 

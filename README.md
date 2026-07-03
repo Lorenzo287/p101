@@ -87,6 +87,6 @@ D/E prefixes terminate the literal. A slash in the prefix marks the decimal.
 - Square-root remainder behavior is approximate.
 
 # References
-- [emulator by Claudio Larini](http://www.claudiolarini.altervista.org/emul2.html)
-- [simulator by Marco Galeotti](https://web.archive.org/web/20160304184208/http://www.marcogaleotti.com/P101Simulator.html)
+- [emulator by Claudio Larini](http://www.claudiolarini.altervista.org/emul2.htm)
+- [simulator by Marco Galeotti](http://www.marcogaleotti.com/p101simulator.html)
 - [emulator by the Univeristy of Amsterdam](https://ub.fnwi.uva.nl/computermuseum/p101emul.html)

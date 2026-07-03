@@ -1,0 +1,28 @@
+; Sum from 1 to 10
+
+A  V
+
+A/ <M   ; generate 1 into M
+D/ >A
+D  <M   ; copy 1 to B, C, D
+C  <M
+B  <M
+
+A/ V
+B  >A
+D  +    ; B + 1
+B  ><
+
+B  >A
+C  +    ; B + C
+C  ><
+
+A/ <M   ; generate 10 into M
+R/ S    ; 0
+D  >A   ; 1
+   >A
+B  -
+/  V    ; cond jump
+
+C  #
+   S

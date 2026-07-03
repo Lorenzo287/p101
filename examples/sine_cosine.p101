@@ -1,0 +1,92 @@
+; Taylor-series sine/cosine in degrees.
+
+.decimals 10
+.set B/ 57,2957795131
+.set C/ 20
+.set D/ 1
+.set F/ -1
+
+A  V
+F  *
+   S
+B  <M
+B  #
+B  >A
+B/ :
+B  ><
+B  #
+/  #
+B  >A
+D  ><
+D/ >A
+C  ><
+D/ >A
+E  ><
+B/ W
+D  >A
+E  :
+F  +
+F  ><
+F  #
+C  >A
+D/ +
+D/ +
+C  ><
+C  >A
+C  x
+C  -
+E  x
+E  ><
+B  >A
+B  x
+F/ x
+D  x
+D  ><
+C/ >A
+C  -
+C/ W
+F  #
+/  #
+   V
+
+A  W
+F  *
+   S
+B  <M
+B  #
+B  >A
+B/ :
+B  ><
+B  #
+/  #
+D/ >A
+D  ><
+C  *
+D/ >A
+E  ><
+B/ Y
+D  >A
+E  :
+F  +
+F  ><
+F  #
+C  >A
+D/ +
+D/ +
+C  ><
+C  >A
+C  x
+C  -
+E  x
+E  ><
+B  >A
+B  x
+F/ x
+D  x
+D  ><
+C/ >A
+C  -
+C/ Y
+F  #
+/  #
+   W

@@ -1,0 +1,18 @@
+; N! from the quick guide
+
+A  Z    ; start label
+   S    ; stop, wait for user input
+D  <M   ; M (input) -> D
+   >A   ; M -> A
+A  W    ; loop label
+A/ <M   ; generate constant 1 into M
+D/ >A
+M  -    ; A = A - M = A - 1
+/  V    ; cond jump
+D  #    ; print D
+   Z    ; goto start
+A/ V    ; cond jump label
+D  ><   ; swap A D
+D  x    ; A = A x D
+D  ><   ; swap A D
+   W    ; goto loop

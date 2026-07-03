@@ -1,0 +1,15 @@
+; Take A, B, C, D from keyboard 
+; and print [(A + B) x C] / D
+
+A  V
+   S
+   >
+   S
+   +
+   S
+   x
+   S
+   :
+A  #
+/  #
+   V

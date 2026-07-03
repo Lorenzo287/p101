@@ -1,0 +1,21 @@
+; N! in keyboard-style notation.
+
+.decimals 0
+
+A  V
+   S
+D  <M
+   >A
+A  W
+A/ <M
+D/ >A
+M  -
+/  V
+D  #
+/  #
+   V
+A/ V
+D  ><
+D  x
+D  ><
+   W

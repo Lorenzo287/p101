@@ -55,16 +55,16 @@ source files. Program files use the ASCII substitutes below.
 
 ![Olivetti Programma 101 keyboard layout](images/P101-KB-layout.jpg)
 
-| Source token | Also accepted | Keyboard role                                |
-| ------------ | ------------- | -------------------------------------------- |
-| `<M`         | `<`           | transfer from `M`                            |
-| `>A`         | `>`           | transfer to `A`                              |
-| `><`         | `><A`         | exchange key                                 |
-| `#`          |               | print key; with `/`, emits a blank tape line |
-| `*`          |               | clear key; in literal mode, digit `9`        |
-| `x`          |               | multiply key                                 |
-| `:`          |               | divide key                                   |
-| `sqrt`       |               | square-root key                              |
+| Source token  | Original Key   | Keyboard role                               |
+| ------------- | -------------- | ------------------------------------------- |
+| `<M` or `<`   | M arrow up     | transfer from `M`                           |
+| `>A` or `>`   | A arrow down   | transfer to `A`                             |
+| `><` or `><A` | A double arrow | exchange key                                |
+| `#`           | rhombus        | print key; with `/` emits a blank tape line |
+| `*`           | *              | clear key; in literal mode, digit `9`       |
+| `x`           | x              | multiply key                                |
+| `:`           | :              | divide key                                  |
+| `sqrt`        | sqrt symbol    | square-root key                             |
 
 ## Registers And Context
 

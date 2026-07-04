@@ -1,0 +1,44 @@
+; ln(X) 
+
+.decimals 9
+.set D/  10
+.set E   15,999999989
+.set E/  5,333340717
+.set F   3,19870438
+.set F/  2,3695603
+
+A  V
+   S
+   >A
+D/ x
+   x
+A  sqrt
+D/ x 
+A  sqrt
+D/ x
+A  sqrt
+D/ -
+D  ><
+D  >A
+   +
+   +
+   :
+D  ><
+D  :
+A  x
+C/ <M
+D/ :
+   :
+D  ><
+F/ >A
+D  x
+F  +
+D  x
+E/ +
+D  x
+E  +
+C/ x
+D/ :
+A  #
+/  #
+   V

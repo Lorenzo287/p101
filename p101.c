@@ -3,8 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_INS 256
-#define HARD_MAX_INS 120
+#define MAX_INS 120
 #define CORE_INS 48
 #define OVERFLOW_INS 12
 #define MAX_LABELS 128
@@ -49,7 +48,7 @@ struct prog {
     struct num init[R_COUNT];
     int hasinit[R_COUNT];
     int used[R_COUNT];
-    int decimals, strict;
+    int decimals;
 };
 
 struct mach {
@@ -279,7 +278,7 @@ static int fitsreg(int r, struct num d) {
     return stored_digits(d) <= regcap(r);
 }
 
-/* Enforce the P101 register digit capacities in strict mode. */
+/* Enforce the P101 register digit capacities. */
 static int checkfitcap(const char *name, int cap, struct num d) {
     if (stored_digits(d) <= cap) return 1;
     fprintf(stderr,"register %s capacity exceeded (%d digits, limit %d)\n",
@@ -341,7 +340,6 @@ static int wholeaccess(const struct mach *m, int r) {
 /* Runtime register access: B-F overlay whole registers with split halves. */
 static int canreadreg(const struct mach *m, const struct prog *p, int r) {
     int pair = regpair(r);
-    if (!p->strict) return 1;
     if (pair >= 0 && wholeaccess(m,r)) {
         if (!p->used[rightreg(pair)] && !p->used[leftreg(pair)]) return 1;
     } else if (!p->used[r]) {
@@ -354,7 +352,6 @@ static int canreadreg(const struct mach *m, const struct prog *p, int r) {
 static int canwritereg(const struct mach *m, const struct prog *p, int r, struct num d) {
     int cap = regcap(r);
     if (!canreadreg(m,p,r)) return 0;
-    if (!p->strict) return 1;
     if (regpair(r) >= 0 && rightside(r) && m->split[regpair(r)])
         cap = 11;
     return checkfitcap(regname(r),cap,d);
@@ -366,9 +363,9 @@ static int spliterror(int r, struct num d) {
     return 0;
 }
 
-static int makesplit(struct mach *m, const struct prog *p, int pair) {
+static int makesplit(struct mach *m, int pair) {
     int right = rightreg(pair), left = leftreg(pair);
-    if (!p->strict || m->split[pair]) return 1;
+    if (m->split[pair]) return 1;
     if (!fitsreg(left,m->reg[right])) return spliterror(right,m->reg[right]);
     m->reg[left] = dint(0);
     m->split[pair] = 1;
@@ -378,7 +375,7 @@ static int makesplit(struct mach *m, const struct prog *p, int pair) {
 static int getregval(struct mach *m, const struct prog *p, int r, struct num *out) {
     int pair = regpair(r);
     if (!canreadreg(m,p,r)) return 0;
-    if (p->strict && splitreg(r) && !makesplit(m,p,pair)) return 0;
+    if (splitreg(r) && !makesplit(m,pair)) return 0;
     *out = m->reg[r];
     return 1;
 }
@@ -386,12 +383,12 @@ static int getregval(struct mach *m, const struct prog *p, int r, struct num *ou
 static int setregval(struct mach *m, const struct prog *p, int r, struct num d) {
     int pair = regpair(r);
     if (!canwritereg(m,p,r,d)) return 0;
-    if (!p->strict || pair < 0) {
+    if (pair < 0) {
         m->reg[r] = d;
         return 1;
     }
     if (splitreg(r)) {
-        if (!makesplit(m,p,pair)) return 0;
+        if (!makesplit(m,pair)) return 0;
         m->reg[r] = d;
         return 1;
     }
@@ -407,10 +404,10 @@ static int setregval(struct mach *m, const struct prog *p, int r, struct num d) 
 static int clearregval(struct mach *m, const struct prog *p, int r) {
     int pair = regpair(r);
     struct num zero = dint(0);
-    if (!p->strict || pair < 0) return setregval(m,p,r,zero);
+    if (pair < 0) return setregval(m,p,r,zero);
     if (!canwritereg(m,p,r,zero)) return 0;
     if (splitreg(r)) {
-        if (!makesplit(m,p,pair)) return 0;
+        if (!makesplit(m,pair)) return 0;
         m->reg[r] = zero;
         if (!p->used[rightreg(pair)]) m->split[pair] = 0;
         return 1;
@@ -488,12 +485,8 @@ static int entry(const struct prog *p, int key) {
 }
 
 static int addins(struct prog *p, struct ins in) {
-    if (p->strict && p->nins == HARD_MAX_INS) {
-        fprintf(stderr,"line %d: too many instructions for P101 memory\n",in.line);
-        return 0;
-    }
     if (p->nins == MAX_INS) {
-        fprintf(stderr,"line %d: too many instructions\n",in.line);
+        fprintf(stderr,"line %d: too many instructions for P101 memory\n",in.line);
         return 0;
     }
     p->ins[p->nins++] = in;
@@ -568,7 +561,7 @@ static int directive(struct prog *p, char **argv, int argc, int line) {
         int r;
         struct num value;
         if (argc != 3 || (r = regid(argv[1])) < 0 || !dparse(argv[2],&value)) return 0;
-        if (p->strict && !checkfit(r,value)) return 0;
+        if (!checkfit(r,value)) return 0;
         p->init[r] = value;
         p->hasinit[r] = 1;
         return 1;
@@ -698,7 +691,7 @@ static int parseline(struct prog *p, char *line, int lineno) {
 }
 
 /* Load and validate a source file before execution starts. */
-static int load(const char *path, struct prog *p, int strict) {
+static int load(const char *path, struct prog *p) {
     char line[MAX_LINE];
     int lineno = 0;
     FILE *fp = fopen(path,"r");
@@ -707,7 +700,6 @@ static int load(const char *path, struct prog *p, int strict) {
         return 0;
     }
     memset(p,0,sizeof(*p));
-    p->strict = strict;
     while(fgets(line,sizeof(line),fp)) {
         if (!parseline(p,line,++lineno)) {
             fclose(fp);
@@ -715,7 +707,7 @@ static int load(const char *path, struct prog *p, int strict) {
         }
     }
     fclose(fp);
-    return !p->strict || mark_instruction_regs(p);
+    return mark_instruction_regs(p);
 }
 
 /* Execution. */
@@ -940,12 +932,12 @@ static int run(const struct prog *p, int start, FILE *input, int trace) {
 }
 
 static void usage(FILE *fp) {
-    fprintf(fp,"Usage: p101 [--start V|W|Y|Z] [--input FILE] [--trace] [--relaxed] program.p101\n");
+    fprintf(fp,"Usage: p101 [--start V|W|Y|Z] [--input FILE] [--trace] program.p101\n");
 }
 
 int main(int argc, char **argv) {
     const char *path = NULL, *input_path = NULL;
-    int j, start = 'V', trace = 0, strict = 1, ok;
+    int j, start = 'V', trace = 0, ok;
     FILE *input = stdin;
     struct prog p;
     for (j = 1; j < argc; j++) {
@@ -955,8 +947,6 @@ int main(int argc, char **argv) {
             input_path = argv[++j];
         } else if (!strcmp(argv[j],"--trace")) {
             trace = 1;
-        } else if (!strcmp(argv[j],"--relaxed")) {
-            strict = 0;
         } else if (!strcmp(argv[j],"-h") || !strcmp(argv[j],"--help")) {
             usage(stdout);
             return 0;
@@ -978,7 +968,7 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
-    ok = load(path,&p,strict) && run(&p,start,input,trace);
+    ok = load(path,&p) && run(&p,start,input,trace);
     if (input != stdin) fclose(input);
     return ok ? 0 : 1;
 }

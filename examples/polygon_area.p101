@@ -1,9 +1,9 @@
 ; Segment/area helper translated from Galeotti's polygon example.
 
 .decimals 5
+.set F/ 0
 
 A  V
-F/ *
    S
 B/ <M
    S
@@ -57,7 +57,6 @@ F/ >A
 E  +
 F/ ><
 F/ #
-/  #
 D/ >A
 B/ ><
 E/ >A

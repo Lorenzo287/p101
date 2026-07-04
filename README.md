@@ -72,8 +72,8 @@ Registers are `M`, `A`, `R`, `B`, `B/`, `C`, `C/`, `D`, `D/`, `E`, `E/`,
 `F`, and `F/`. Lowercase `b` through `f` are accepted as one-letter aliases
 for the split registers `B/` through `F/`.
 
-In strict mode, `B` through `F` follow the hardware overlay. Each starts as a
-22-digit whole register. A slash access splits it into two 11-digit halves:
+`B` through `F` follow the hardware overlay. Each starts as a 22-digit whole
+register. A slash access splits it into two 11-digit halves:
 `B/` is the left half and `B` is the right half. Splitting a whole register
 that currently holds more than 11 digits is an error.
 
@@ -83,6 +83,11 @@ half as the current value. `B *` clears the whole register when `B` is unsplit,
 or the right half when it is split. The same rule applies to `C`, `D`, `E`,
 and `F`. If an instruction-overflow slot occupies one half of `D`, `E`, or
 `F`, only the other half can be used for data.
+
+The interpreter enforces the P101 internal program layout: 48 core instruction
+slots, then overflow into `F`, `F/`, `E`, `E/`, `D`, and `D/`, for 120
+instructions total. Register halves occupied by instructions cannot also be
+used as data.
 
 Routine keys are `V`, `W`, `Y`, and `Z`. The same symbol can change meaning
 based on the full chord. `D +` uses `D` as a register prefix and adds `D` to
@@ -196,13 +201,6 @@ use either `.` or `,` as the decimal separator.
   default is `V`.
 - `--input FILE`: read `S` input values from a file.
 - `--trace`: print executed instructions to stderr.
-- `--relaxed`: disable hardware memory, register-overlay, and digit-capacity
-  checks for modern exploratory listings.
-
-By default the interpreter enforces the P101 internal program layout: 48 core
-instruction slots, then overflow into `F`, `F/`, `E`, `E/`, `D`, and `D/`,
-for 120 instructions total. Register halves occupied by instructions cannot
-also be used as data.
 
 ## References
 

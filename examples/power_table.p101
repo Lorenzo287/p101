@@ -1,0 +1,15 @@
+; Power table of N
+
+.decimals 0
+
+A  V
+   S
+B  <M   ; store N into B and C
+C  <M
+B  V    ; loop label
+C  >A   ; move N into accumulator
+B  x    ; multiply by B
+        ; note: B at the ith iteration equals N^i
+A  #    ; print temp result
+B  ><   ; swap with A to store cumulative result into B
+C  V    ; goto B V

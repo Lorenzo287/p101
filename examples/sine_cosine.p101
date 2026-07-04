@@ -1,92 +1,59 @@
-; Taylor-series sine/cosine in degrees.
+; Taylor-polynomial sine/cosine in degrees.
+; V computes sine, W computes cosine.
 
 .decimals 10
-.set B/ 57,2957795131
-.set C/ 20
-.set D/ 1
-.set F/ -1
+.set B/ 57,2957795
+.set C/ -0,5
+.set D/ -0,0001984127
+.set D 0,0416666667
+.set E/ 0,0083333333
+.set E 0,0000248016
+.set F/ -0,1666666667
+.set F -0,0013888889
 
 A  V
-F  *
    S
 B  <M
-B  #
 B  >A
 B/ :
 B  ><
-B  #
-/  #
-B  >A
-D  ><
-D/ >A
-C  ><
-D/ >A
-E  ><
-B/ W
-D  >A
-E  :
-F  +
-F  ><
-F  #
-C  >A
-D/ +
-D/ +
-C  ><
-C  >A
-C  x
-C  -
-E  x
-E  ><
 B  >A
 B  x
-F/ x
-D  x
-D  ><
-C/ >A
-C  -
-C/ W
-F  #
+C  ><
+D/ >A
+C  x
+E/ +
+C  x
+F/ +
+C  x
+A/ <M
+D/ >A
+M  +
+B  x
+A  #
 /  #
    V
 
 A  W
-F  *
    S
 B  <M
-B  #
 B  >A
 B/ :
 B  ><
-B  #
-/  #
-D/ >A
-D  ><
-C  *
-D/ >A
-E  ><
-B/ Y
-D  >A
-E  :
-F  +
-F  ><
-F  #
-C  >A
-D/ +
-D/ +
-C  ><
-C  >A
-C  x
-C  -
-E  x
-E  ><
 B  >A
 B  x
-F/ x
-D  x
-D  ><
-C/ >A
-C  -
-C/ Y
-F  #
+C  ><
+E  >A
+C  x
+F  +
+C  x
+D  +
+C  x
+C/ +
+C  x
+A/ <M
+D/ >A
+M  +
+A  #
 /  #
    W

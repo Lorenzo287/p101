@@ -61,14 +61,17 @@ Assert-Matches $factorial "D\s+120" "factorial"
 $prime = Invoke-P101 -InputValues @("120") -ArgsList @("examples/prime_factors.p101")
 Assert-Matches $prime "C\s+2[\s\S]*C\s+2[\s\S]*C\s+2[\s\S]*C\s+3[\s\S]*B\s+5" "prime factors"
 
-$sine = Invoke-P101 -InputValues @("30") -ArgsList @("--relaxed", "examples/sine_cosine.p101")
-Assert-Matches $sine "F\s+0,4999999999" "sine"
+$sine = Invoke-P101 -InputValues @("30") -ArgsList @("examples/sine_cosine.p101")
+Assert-Matches $sine "A\s+0,4999999919" "sine"
 
-$cosine = Invoke-P101 -InputValues @("30") -ArgsList @("--relaxed", "--start", "W", "examples/sine_cosine.p101")
-Assert-Matches $cosine "F\s+0,8660254039" "cosine"
+$cosine = Invoke-P101 -InputValues @("30") -ArgsList @("--start", "W", "examples/sine_cosine.p101")
+Assert-Matches $cosine "A\s+0,8660254042" "cosine"
 
-$cubic = Invoke-P101 -InputValues @("27") -ArgsList @("--relaxed", "examples/cubic_root.p101")
-Assert-Matches $cubic "C\s+2,9999999998" "cubic root"
+$cubic = Invoke-P101 -InputValues @("27") -ArgsList @("examples/cubic_root.p101")
+Assert-Matches $cubic "C\s+3" "cubic root"
+
+$polygon = Invoke-P101 -InputValues @("0", "0", "1", "1") -ArgsList @("examples/polygon_area.p101")
+Assert-Matches $polygon "E\s+1,41421[\s\S]*F/\s+0" "polygon area"
 
 $Tmp = Join-Path $Root ".smoke_tmp"
 if (Test-Path $Tmp) {

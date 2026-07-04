@@ -1,8 +1,7 @@
 ; Cube root by fixed-point iteration
 ; x = (x + N / x^2) / 2.
-; run with --relaxed since it relies on virtual D and D/
 
-.decimals 10
+.decimals 9
 .set D/ 1
 .set E/ 2
 .set F/ 30

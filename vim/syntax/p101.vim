@@ -33,7 +33,7 @@ syn match p101Operator /sqrt/
 syn match p101Operator /><A\|>A\|<M\|><\|[<>+\-x:#*S]/
 
 " Special service or non-register chords.
-syn match p101Service /^\s*\%(S\|RS\)\ze\%(\s\|;\|$\)/
+syn match p101Service /^\s*\%(S\|R\s*S\)\ze\%(\s\|;\|$\)/
 syn match p101Special /^\s*\/\s*#\ze\%(\s\|;\|$\)/
 syn match p101Special /^\s*\/\s*\%(><A\|><\)\ze\%(\s\|;\|$\)/
 syn match p101Special /^\s*A\s*\%(><A\|><\)\ze\%(\s\|;\|$\)/

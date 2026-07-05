@@ -81,13 +81,16 @@ The clear key controls transitions between the two views. `B/ *` clears the
 left half and makes `B` available again as a whole register, keeping the right
 half as the current value. `B *` clears the whole register when `B` is unsplit,
 or the right half when it is split. The same rule applies to `C`, `D`, `E`,
-and `F`. If an instruction-overflow slot occupies one half of `D`, `E`, or
-`F`, only the other half can be used for data.
+and `F`.
 
 The interpreter enforces the P101 internal program layout: 48 core instruction
 slots, then overflow into `F`, `F/`, `E`, `E/`, `D`, and `D/`, for 120
-instructions total. Register halves occupied by instructions cannot also be
-used as data.
+instructions total. Overflow halves can reserve data space the same way as the
+hardware: leading `S` slots in that half reserve one numeric digit each, up to
+the normal 11-digit split-register capacity. The executable part of that half
+should start after those reserved slots, usually at an `A` reference point that
+the program jumps to. If no leading `S` slots are reserved, that half is
+instruction-only and cannot be used for data.
 
 Routine keys are `V`, `W`, `Y`, and `Z`. The same symbol can change meaning
 based on the full chord. `D +` uses `D` as a register prefix and adds `D` to
@@ -107,7 +110,9 @@ prefix is optional and omitted, it defaults to `M`; for example, `>A` loads
 Let `KEY` be one of `V`, `W`, `Y`, or `Z`. Reference points are labels:
 `A KEY`, `A/ KEY`, `B KEY`, `B/ KEY`, `E KEY`, `E/ KEY`, `F KEY`, and
 `F/ KEY`. The command-line entry point `--start V` starts at `A V`,
-`--start W` starts at `A W`, and so on.
+`--start W` starts at `A W`, and so on. `--start` also accepts full
+unconditional origins such as `C W`/`CW`, and direct reference points such as
+`A W`/`AW`.
 
 Unconditional jumps are written as `KEY`, `C KEY`, `D KEY`, or `R KEY`;
 they target `A KEY`, `B KEY`, `E KEY`, and `F KEY` respectively.
@@ -119,15 +124,31 @@ the next instruction.
 
 ### Data Movement And Service Keys
 
-`S` stops and reads the next input value into `M`. With `--input FILE`, it
-reads from the file; if there is no more input, the program stops.
+`S` stops and releases the operator transcript. A bare numeric input value is
+stored in `M` and execution continues after `S`. `ENTER VALUE` stores a number
+in `M` without restarting, so manual key chords can be performed while the
+program is stopped. `START` or `S` restarts without entering a new number.
+Routine and jump origins such as `W`, `C W`, or `D Z` resume from the selected
+reference point.
+
+While stopped, non-jump key chords such as `B <M`, `A #`, or `B x` execute in
+manual mode without advancing the stored program. `CARD FILE` loads another
+program card, preserving `M`, `A`, `R`, `B`, `C`, and the decimal-wheel
+setting while refreshing `D`, `E`, `F`, and their splits from the new card.
+Use `R S` before the card load, and again at the start of the next card, to
+carry `D` and `D/` through `R` using the P101 chaining convention. Select a
+routine key afterward to continue. With `--input FILE`, input items are read
+from the file; EOF stops the program.
 
 `REG <M` copies `M` into `REG`; `REG >A` copies `REG` into `A`; and
 `REG ><` exchanges `REG` and `A`. The special form `R ><` copies `R` into
-`A` instead of exchanging. `R S` exchanges `D` and `R`.
+`A` instead of exchanging. `R S` exchanges `D` plus `D/` with `R`; when this
+is used for chaining, `R` cannot be used again until another `R S` restores the
+saved pair.
 
-`REG *` clears a register. `/ ><` copies the decimal part of `A` into `M`.
-`A ><` replaces `A` with its absolute value.
+`REG *` clears a register, except `M` and `R`, which the P101 clear key cannot
+clear. `/ ><` copies the decimal part of `A` into `M`. `A ><` replaces `A`
+with its absolute value.
 
 ### Arithmetic And Output
 
@@ -139,6 +160,10 @@ stores `sqrt(REG)` in `A`, the remainder `REG - A * A` in `R`, and `2 * A` in
 
 The arithmetic forms are `REG +`, `REG -`, `REG x`, `REG :`, and
 `REG sqrt`. `REG #` prints a register, while `/ #` prints a blank tape line.
+
+In manual/calculator operation, multiplication, division, and square root print
+the resulting `A` value automatically. Addition and subtraction do not; print
+`A` explicitly with `A #`.
 
 ## Literal Constants
 
@@ -192,15 +217,44 @@ Directives are interpreter conveniences, not P101 keys. Numeric values may
 use either `.` or `,` as the decimal separator.
 
 - `.decimals N` or `decimals N`: set decimal precision, from `0` to `15`;
-  default is `0`.
+  default is `0`. This models setting the decimal wheel before running; the
+  CLI `--decimals N` option overrides it.
 - `.set REG VALUE` or `set REG VALUE`: initialize a register before execution.
 
 ## CLI Options
 
-- `--start KEY`: select the start routine, one of `V`, `W`, `Y`, or `Z`;
-  default is `V`.
-- `--input FILE`: read `S` input values from a file.
+- `--start ORIGIN`: select the start origin or reference point; default is
+  `V`. Examples: `W`, `CW`, `AW`.
+- `--decimals N`: override the program decimal-wheel setting, from `0` to
+  `15`.
+- `--input FILE`: read operator transcript items from a file.
 - `--trace`: print executed instructions to stderr.
+- `--calc`: run without a stored program as a manual calculator, reading
+  numbers, `ENTER VALUE`, and key chords from stdin or `--input`.
+
+## Chaining Example
+
+`examples/chaining_square_card1.p101` and
+`examples/chaining_square_card2.p101` demonstrate card chaining and the
+special `R S` handoff. Card 1 reads `x` and `y`, stores them in `D` and `D/`,
+executes `R S` to save that pair in `R`, then stops. The operator transcript
+loads card 2 and presses `V`; card 2 starts with `R S`, restoring `D` and `D/`,
+then prints `(x + y)^2`.
+
+```text
+3
+4
+CARD examples/chaining_square_card2.p101
+V
+```
+
+Run it with:
+
+```sh
+p101 --input examples/chaining_square.input examples/chaining_square_card1.p101
+```
+
+The sample prints `A 49`.
 
 ## References
 

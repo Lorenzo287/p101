@@ -1,0 +1,13 @@
+; Chaining demo, card 2.
+; Restores D D/ with R S and prints (x + y)^2.
+
+.decimals 0
+
+A  V
+R  S
+D  >A
+D/ +
+B  ><
+B  >A
+B  x
+A  #

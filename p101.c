@@ -48,12 +48,15 @@ struct prog {
     struct num init[R_COUNT];
     int hasinit[R_COUNT];
     int used[R_COUNT];
+    int datacap[R_COUNT];
     int decimals;
 };
 
 struct mach {
     struct num reg[R_COUNT];
+    struct num rs_right, rs_left;
     int split[5];
+    int rs_saved, rs_split, rs_protected;
     int pc, decimals, trace;
     FILE *input;
 };
@@ -237,6 +240,18 @@ static int eq(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
+static int parsedecimals(const char *s, int *out) {
+    char *end;
+    long value;
+    while(isspace((unsigned char)*s)) s++;
+    if (!*s) return 0;
+    value = strtol(s,&end,10);
+    while(isspace((unsigned char)*end)) end++;
+    if (*end || value < 0 || value > 15) return 0;
+    *out = (int)value;
+    return 1;
+}
+
 static int routine(int c) {
     return c == 'V' || c == 'W' || c == 'Y' || c == 'Z';
 }
@@ -299,17 +314,49 @@ static int insreg(int pc) {
     return slot < (int)(sizeof(order)/sizeof(order[0])) ? order[slot] : -1;
 }
 
-/* Mark D/E/F register halves consumed by instruction overflow. */
+static int halfdatacap(const struct prog *p, int start, int count) {
+    int j, cap = 0;
+    for (j = 0; j < count && start+j < p->nins; j++) {
+        if (p->ins[start+j].op != I_INPUT) break;
+        cap++;
+    }
+    return cap > 11 ? 11 : cap;
+}
+
+static int hasregdata(const struct prog *p, int r) {
+    return !p->used[r] || p->datacap[r] > 0;
+}
+
+/* Mark D/E/F register halves consumed by instruction overflow.
+   Leading S slots in an overflow half reserve numeric digit positions,
+   matching the P101 technique for sharing one half between data and code. */
 static int mark_instruction_regs(struct prog *p) {
-    int pc, r;
+    int pc, r, start, count;
     for (pc = 0; pc < p->nins; pc++) {
         r = insreg(pc);
         if (r >= 0) p->used[r] = 1;
     }
     for (r = 0; r < R_COUNT; r++) {
-        if (p->used[r] && p->hasinit[r]) {
-            fprintf(stderr,"register %s is occupied by program instructions\n",regname(r));
-            return 0;
+        if (!p->used[r]) continue;
+        start = -1;
+        for (pc = CORE_INS; pc < p->nins; pc++) {
+            if (insreg(pc) == r) {
+                start = pc;
+                break;
+            }
+        }
+        if (start >= 0) {
+            count = p->nins - start;
+            if (count > OVERFLOW_INS) count = OVERFLOW_INS;
+            p->datacap[r] = halfdatacap(p,start,count);
+        }
+        if (p->hasinit[r]) {
+            if (p->datacap[r] == 0) {
+                fprintf(stderr,"register %s is occupied by program instructions\n",regname(r));
+                return 0;
+            }
+            if (!checkfitcap(regname(r),p->datacap[r],p->init[r]))
+                return 0;
         }
     }
     return 1;
@@ -332,6 +379,19 @@ static int rightside(int r) {
     return pair >= 0 && r == rightreg(pair);
 }
 
+static int programsplit(const struct prog *p, int pair) {
+    return p->used[rightreg(pair)] || p->used[leftreg(pair)];
+}
+
+static int regdatacap(const struct mach *m, const struct prog *p, int r) {
+    int cap = regcap(r);
+    if (regpair(r) >= 0 && rightside(r) && m->split[regpair(r)])
+        cap = 11;
+    if (p->used[r] && p->datacap[r] < cap)
+        cap = p->datacap[r];
+    return cap;
+}
+
 static int wholeaccess(const struct mach *m, int r) {
     int pair = regpair(r);
     return pair >= 0 && rightside(r) && !m->split[pair];
@@ -340,9 +400,13 @@ static int wholeaccess(const struct mach *m, int r) {
 /* Runtime register access: B-F overlay whole registers with split halves. */
 static int canreadreg(const struct mach *m, const struct prog *p, int r) {
     int pair = regpair(r);
+    if (r == R_R && m->rs_saved) {
+        fprintf(stderr,"register R holds an RS-saved D register pair\n");
+        return 0;
+    }
     if (pair >= 0 && wholeaccess(m,r)) {
-        if (!p->used[rightreg(pair)] && !p->used[leftreg(pair)]) return 1;
-    } else if (!p->used[r]) {
+        if (!programsplit(p,pair)) return 1;
+    } else if (hasregdata(p,r)) {
         return 1;
     }
     fprintf(stderr,"register %s is occupied by program instructions\n",regname(r));
@@ -350,10 +414,16 @@ static int canreadreg(const struct mach *m, const struct prog *p, int r) {
 }
 
 static int canwritereg(const struct mach *m, const struct prog *p, int r, struct num d) {
-    int cap = regcap(r);
+    int cap;
+    if (r == R_R && m->rs_saved) {
+        if (m->rs_protected) {
+            fprintf(stderr,"register R holds an RS-saved D register pair\n");
+            return 0;
+        }
+        return checkfit(r,d);
+    }
     if (!canreadreg(m,p,r)) return 0;
-    if (regpair(r) >= 0 && rightside(r) && m->split[regpair(r)])
-        cap = 11;
+    cap = regdatacap(m,p,r);
     return checkfitcap(regname(r),cap,d);
 }
 
@@ -384,6 +454,11 @@ static int setregval(struct mach *m, const struct prog *p, int r, struct num d) 
     int pair = regpair(r);
     if (!canwritereg(m,p,r,d)) return 0;
     if (pair < 0) {
+        if (r == R_R) {
+            m->rs_saved = 0;
+            m->rs_protected = 0;
+            m->rs_split = 0;
+        }
         m->reg[r] = d;
         return 1;
     }
@@ -404,18 +479,22 @@ static int setregval(struct mach *m, const struct prog *p, int r, struct num d) 
 static int clearregval(struct mach *m, const struct prog *p, int r) {
     int pair = regpair(r);
     struct num zero = dint(0);
+    if (r == R_M || r == R_R) {
+        fprintf(stderr,"register %s cannot be cleared\n",regname(r));
+        return 0;
+    }
     if (pair < 0) return setregval(m,p,r,zero);
     if (!canwritereg(m,p,r,zero)) return 0;
     if (splitreg(r)) {
         if (!makesplit(m,pair)) return 0;
         m->reg[r] = zero;
-        if (!p->used[rightreg(pair)]) m->split[pair] = 0;
+        if (!programsplit(p,pair)) m->split[pair] = 0;
         return 1;
     }
     m->reg[r] = zero;
     if (m->split[pair]) {
         if (m->reg[leftreg(pair)].n == 0 &&
-            !p->used[rightreg(pair)] && !p->used[leftreg(pair)])
+            !programsplit(p,pair))
             m->split[pair] = 0;
         return 1;
     }
@@ -547,13 +626,79 @@ static int jumptarget(const char *key, int *conditional, char *target) {
     return 0;
 }
 
+/* Decode one normalized key chord into an executable instruction. */
+static int decodekey(const char *key, int line, struct ins *in) {
+    int conditional;
+    char prefix[MAX_NAME], op[MAX_NAME];
+    memset(in,0,sizeof(*in));
+    in->reg = R_M;
+    in->line = line;
+    snprintf(in->key,sizeof(in->key),"%s",key);
+    if (jumptarget(key,&conditional,in->target)) {
+        in->op = conditional ? I_IFPOS : I_GOTO;
+        return 1;
+    }
+    if (!strcmp(key,"RS")) {
+        in->op = I_RS;
+        return 1;
+    }
+    if (!splitkey(key,prefix,op)) {
+        return 0;
+    }
+    if (!strcmp(prefix,"A/") && !strcmp(op,"<")) {
+        in->op = I_LIT;
+        return 1;
+    }
+    if (!strcmp(op,"S")) {
+        in->op = prefix[0] ? I_LITDIG : I_INPUT;
+    } else if (!strcmp(op,"<")) {
+        if (!setreg(prefix,&in->reg)) return 0;
+        in->op = I_STORE;
+    } else if (!strcmp(op,">")) {
+        if (!setreg(prefix,&in->reg)) return 0;
+        in->op = I_LOAD;
+    } else if (!strcmp(op,"><")) {
+        if (!strcmp(prefix,"/")) in->op = I_FRAC;
+        else if (!strcmp(prefix,"A")) in->op = I_ABS;
+        else {
+            if (!setreg(prefix,&in->reg)) return 0;
+            in->op = I_SWAP;
+        }
+    } else if (!strcmp(op,"+")) {
+        if (!setreg(prefix,&in->reg)) return 0;
+        in->op = I_ADD;
+    } else if (!strcmp(op,"-")) {
+        if (!setreg(prefix,&in->reg)) return 0;
+        in->op = I_SUB;
+    } else if (!strcmp(op,"x")) {
+        if (!setreg(prefix,&in->reg)) return 0;
+        in->op = I_MUL;
+    } else if (!strcmp(op,":")) {
+        if (!setreg(prefix,&in->reg)) return 0;
+        in->op = I_DIV;
+    } else if (!strcmp(op,"sqrt")) {
+        if (!setreg(prefix,&in->reg)) return 0;
+        in->op = I_SQRT;
+    } else if (!strcmp(op,"#")) {
+        if (!strcmp(prefix,"/")) in->op = I_NL;
+        else {
+            if (!setreg(prefix,&in->reg)) return 0;
+            in->op = I_PRINT;
+        }
+    } else if (!strcmp(op,"*")) {
+        if (!setreg(prefix,&in->reg)) return 0;
+        in->op = I_CLEAR;
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
 /* Parse interpreter-only metadata such as decimal wheel and initial values. */
 static int directive(struct prog *p, char **argv, int argc, int line) {
     if (eq(argv[0],".decimals") || eq(argv[0],"decimals")) {
         int decimals;
-        if (argc != 2) return 0;
-        decimals = atoi(argv[1]);
-        if (decimals < 0 || decimals > 15) return 0;
+        if (argc != 2 || !parsedecimals(argv[1],&decimals)) return 0;
         p->decimals = decimals;
         return 1;
     }
@@ -570,76 +715,20 @@ static int directive(struct prog *p, char **argv, int argc, int line) {
     return 0;
 }
 
-/* Parse one normalized key chord into an executable instruction. */
+/* Parse one normalized key chord into a stored program instruction. */
 static int parsekey(struct prog *p, const char *key, int line) {
     struct ins in;
-    int conditional;
-    char prefix[MAX_NAME], op[MAX_NAME];
-    memset(&in,0,sizeof(in));
-    in.reg = R_M;
-    in.line = line;
-    snprintf(in.key,sizeof(in.key),"%s",key);
     if (refpoint(key)) {
+        memset(&in,0,sizeof(in));
+        in.reg = R_M;
+        in.line = line;
+        snprintf(in.key,sizeof(in.key),"%s",key);
         if (!addlabel(p,key,p->nins,line)) return 0;
         in.op = I_MARK;
         return addins(p,in);
     }
-    if (jumptarget(key,&conditional,in.target)) {
-        in.op = conditional ? I_IFPOS : I_GOTO;
-        return addins(p,in);
-    }
-    if (!strcmp(key,"RS")) {
-        in.op = I_RS;
-        return addins(p,in);
-    }
-    if (!splitkey(key,prefix,op)) {
+    if (!decodekey(key,line,&in)) {
         fprintf(stderr,"line %d: cannot parse key chord %s\n",line,key);
-        return 0;
-    }
-    if (!strcmp(prefix,"A/") && !strcmp(op,"<")) {
-        in.op = I_LIT;
-        return addins(p,in);
-    }
-    if (!strcmp(op,"S")) {
-        in.op = prefix[0] ? I_LITDIG : I_INPUT;
-    } else if (!strcmp(op,"<")) {
-        if (!setreg(prefix,&in.reg)) return 0;
-        in.op = I_STORE;
-    } else if (!strcmp(op,">")) {
-        if (!setreg(prefix,&in.reg)) return 0;
-        in.op = I_LOAD;
-    } else if (!strcmp(op,"><")) {
-        if (!strcmp(prefix,"/")) in.op = I_FRAC;
-        else if (!strcmp(prefix,"A")) in.op = I_ABS;
-        else {
-            if (!setreg(prefix,&in.reg)) return 0;
-            in.op = I_SWAP;
-        }
-    } else if (!strcmp(op,"+")) {
-        if (!setreg(prefix,&in.reg)) return 0;
-        in.op = I_ADD;
-    } else if (!strcmp(op,"-")) {
-        if (!setreg(prefix,&in.reg)) return 0;
-        in.op = I_SUB;
-    } else if (!strcmp(op,"x")) {
-        if (!setreg(prefix,&in.reg)) return 0;
-        in.op = I_MUL;
-    } else if (!strcmp(op,":")) {
-        if (!setreg(prefix,&in.reg)) return 0;
-        in.op = I_DIV;
-    } else if (!strcmp(op,"sqrt")) {
-        if (!setreg(prefix,&in.reg)) return 0;
-        in.op = I_SQRT;
-    } else if (!strcmp(op,"#")) {
-        if (!strcmp(prefix,"/")) in.op = I_NL;
-        else {
-            if (!setreg(prefix,&in.reg)) return 0;
-            in.op = I_PRINT;
-        }
-    } else if (!strcmp(op,"*")) {
-        if (!setreg(prefix,&in.reg)) return 0;
-        in.op = I_CLEAR;
-    } else {
         return 0;
     }
     return addins(p,in);
@@ -654,6 +743,37 @@ static int words(char *s, char **argv, int max) {
         t = strtok(NULL," \t\r\n");
     }
     return argc;
+}
+
+static void upper_routine_key(char *key) {
+    if (key[0] && !key[1]) key[0] = (char)toupper((unsigned char)key[0]);
+}
+
+static int keyfromline(char *line, char *key, size_t size) {
+    char *argv[4], *comment;
+    int argc;
+    comment = strchr(line,';');
+    if (comment) *comment = '\0';
+    line = trim(line);
+    if (!line[0]) return 0;
+    argc = words(line,argv,4);
+    if (argc <= 0) return 0;
+    if (argc == 1) {
+        snprintf(key,size,"%s",argv[0]);
+        upper_routine_key(key);
+        return 1;
+    }
+    if (argc == 2) {
+        snprintf(key,size,"%s%s",argv[0],argv[1]);
+        upper_routine_key(key);
+        return 1;
+    }
+    if (argc == 3 && !strcmp(argv[1],"/")) {
+        snprintf(key,size,"%s/%s",argv[0],argv[2]);
+        upper_routine_key(key);
+        return 1;
+    }
+    return 0;
 }
 
 /* Strip comments, join spaced chords, and dispatch directives/key chords. */
@@ -711,18 +831,6 @@ static int load(const char *path, struct prog *p) {
 }
 
 /* Execution. */
-static int readnum(struct mach *m, struct num *out) {
-    char line[MAX_LINE], *s;
-    while(fgets(line,sizeof(line),m->input)) {
-        s = trim(line);
-        if (!s[0]) continue;
-        if (dparse(s,out)) return 1;
-        fprintf(stderr,"invalid input: %s\n",s);
-        return 0;
-    }
-    return 0;
-}
-
 static int litdigit(const char *op) {
     if (!strcmp(op,"><")) return 3;
     if (op[1]) return -1;
@@ -817,20 +925,35 @@ static int jump(struct mach *m, const struct prog *p, const char *target) {
     return P101_NEXT;
 }
 
-/* Execute the instruction at the current program counter. */
-static int step(struct mach *m, const struct prog *p) {
-    struct ins in = p->ins[m->pc];
+static int printreg(struct mach *m, const struct prog *p, int r) {
+    struct num value;
+    char text[128];
+    if (!getregval(m,p,r,&value)) return 0;
+    dstr(value,m->decimals,r != R_R,text,sizeof(text));
+    printf("%s\t%s\n",regname(r),text);
+    return 1;
+}
+
+static int nextpc(struct mach *m, int advance) {
+    if (advance) m->pc++;
+    return P101_NEXT;
+}
+
+static int rsxchg(struct mach *m, const struct prog *p);
+
+static int execins(struct mach *m, const struct prog *p, struct ins in,
+                   int advance, int manual) {
     struct num tmp, tmp2, tmp3;
-    char value[128];
-    if (m->trace) fprintf(stderr,"%03d %s\n",m->pc+1,in.key);
     switch(in.op) {
     case I_MARK:
-        m->pc++; return P101_NEXT;
+        return nextpc(m,advance);
     case I_INPUT:
-        if (!readnum(m,&tmp)) return P101_STOP;
-        if (!setregval(m,p,R_M,tmp)) return P101_ERR;
-        m->pc++; return P101_NEXT;
+        return P101_STOP;
     case I_LIT:
+        if (manual) {
+            fprintf(stderr,"literal generation is only valid in stored programs\n");
+            return P101_ERR;
+        }
         if (!literal(m,p)) {
             fprintf(stderr,"invalid literal sequence at step %d\n",m->pc+1);
             return P101_ERR;
@@ -842,11 +965,11 @@ static int step(struct mach *m, const struct prog *p) {
     case I_STORE:
         if (!getregval(m,p,R_M,&tmp) || !setregval(m,p,in.reg,tmp))
             return P101_ERR;
-        m->pc++; return P101_NEXT;
+        return nextpc(m,advance);
     case I_LOAD:
         if (!getregval(m,p,in.reg,&tmp) || !setregval(m,p,R_A,tmp))
             return P101_ERR;
-        m->pc++; return P101_NEXT;
+        return nextpc(m,advance);
     case I_SWAP:
         if (in.reg == R_R) {
             if (!getregval(m,p,R_R,&tmp) || !setregval(m,p,R_A,tmp))
@@ -856,20 +979,22 @@ static int step(struct mach *m, const struct prog *p) {
                 !setregval(m,p,in.reg,tmp2) || !setregval(m,p,R_A,tmp))
                 return P101_ERR;
         }
-        m->pc++; return P101_NEXT;
+        return nextpc(m,advance);
     case I_FRAC:
         if (!getregval(m,p,R_A,&tmp)) return P101_ERR;
         tmp = dfrac(tmp);
         if (!setregval(m,p,R_M,tmp)) return P101_ERR;
-        m->pc++; return P101_NEXT;
+        return nextpc(m,advance);
     case I_ABS:
         if (!getregval(m,p,R_A,&tmp)) return P101_ERR;
         if (tmp.n < 0) tmp.n = -tmp.n;
         if (!setregval(m,p,R_A,tmp)) return P101_ERR;
-        m->pc++; return P101_NEXT;
+        return nextpc(m,advance);
     case I_ADD: case I_SUB: case I_MUL: case I_DIV:
         if (!binary(m,p,in.reg,in.op)) return P101_ERR;
-        m->pc++; return P101_NEXT;
+        if (manual && (in.op == I_MUL || in.op == I_DIV) &&
+            !printreg(m,p,R_A)) return P101_ERR;
+        return nextpc(m,advance);
     case I_SQRT:
         if (!getregval(m,p,in.reg,&tmp)) return P101_ERR;
         tmp2 = dsqrt(tmp,m->decimals);
@@ -877,50 +1002,243 @@ static int step(struct mach *m, const struct prog *p) {
         if (!setregval(m,p,R_M,dmul(dint(2),tmp2)) ||
             !setregval(m,p,R_A,tmp2) || !setregval(m,p,R_R,tmp3))
             return P101_ERR;
-        m->pc++; return P101_NEXT;
+        if (manual && !printreg(m,p,R_A)) return P101_ERR;
+        return nextpc(m,advance);
     case I_CLEAR:
+        if (manual && !printreg(m,p,in.reg)) return P101_ERR;
         if (!clearregval(m,p,in.reg)) return P101_ERR;
-        m->pc++; return P101_NEXT;
+        return nextpc(m,advance);
     case I_PRINT:
-        if (!getregval(m,p,in.reg,&tmp)) return P101_ERR;
-        dstr(tmp,m->decimals,in.reg != R_R,value,sizeof(value));
-        printf("%s\t%s\n",regname(in.reg),value);
-        m->pc++; return P101_NEXT;
+        if (!printreg(m,p,in.reg)) return P101_ERR;
+        return nextpc(m,advance);
     case I_NL:
-        putchar('\n'); m->pc++; return P101_NEXT;
+        putchar('\n');
+        return nextpc(m,advance);
     case I_GOTO:
         return jump(m,p,in.target);
     case I_IFPOS:
         if (!getregval(m,p,R_A,&tmp)) return P101_ERR;
-        if (tmp.n <= 0) {
-            m->pc++;
-            return P101_NEXT;
-        }
+        if (tmp.n <= 0) return nextpc(m,advance);
         return jump(m,p,in.target);
     case I_RS:
-        if (!getregval(m,p,R_D,&tmp) || !getregval(m,p,R_R,&tmp2) ||
-            !setregval(m,p,R_D,tmp2) || !setregval(m,p,R_R,tmp))
-            return P101_ERR;
-        m->pc++; return P101_NEXT;
+        if (!rsxchg(m,p)) return P101_ERR;
+        return nextpc(m,advance);
     }
     return P101_ERR;
 }
 
+static int getdpair(struct mach *m, const struct prog *p,
+                    struct num *right, struct num *left, int *split) {
+    int pair = regpair(R_D);
+    *split = m->split[pair];
+    if (!getregval(m,p,R_D,right)) return 0;
+    if (*split) {
+        if (!getregval(m,p,R_DS,left)) return 0;
+    } else {
+        *left = dint(0);
+    }
+    return 1;
+}
+
+static int setdpair(struct mach *m, const struct prog *p,
+                    struct num right, struct num left, int split) {
+    int pair = regpair(R_D);
+    if (split) {
+        if (!setregval(m,p,R_DS,left) || !setregval(m,p,R_D,right)) return 0;
+        return 1;
+    }
+    if (m->split[pair] && !clearregval(m,p,R_DS)) return 0;
+    return setregval(m,p,R_D,right);
+}
+
+static int rsxchg(struct mach *m, const struct prog *p) {
+    struct num d_right, d_left, r_value;
+    int d_split;
+    if (!getdpair(m,p,&d_right,&d_left,&d_split)) return 0;
+    if (m->rs_saved) {
+        struct num saved_right = m->rs_right, saved_left = m->rs_left;
+        int saved_split = m->rs_split;
+        if (!setdpair(m,p,saved_right,saved_left,saved_split)) return 0;
+        m->rs_right = d_right;
+        m->rs_left = d_left;
+        m->rs_split = d_split;
+        m->rs_protected = 0;
+        return 1;
+    }
+    if (!getregval(m,p,R_R,&r_value)) return 0;
+    m->rs_right = d_right;
+    m->rs_left = d_left;
+    m->rs_split = d_split;
+    m->rs_saved = 1;
+    m->rs_protected = 1;
+    if (!setdpair(m,p,r_value,dint(0),0)) return 0;
+    return 1;
+}
+
+static int cardreg(int r) {
+    return r >= R_D && r <= R_FS;
+}
+
+static void set_used_splits(struct mach *m, const struct prog *p, int card_only) {
+    int j, first = card_only ? 2 : 0;
+    for (j = first; j < 5; j++)
+        if (p->used[rightreg(j)] || p->used[leftreg(j)] || p->hasinit[leftreg(j)])
+            m->split[j] = 1;
+}
+
+static int apply_initial_regs(struct mach *m, const struct prog *p, int card_only) {
+    int j;
+    for (j = 0; j < R_COUNT; j++)
+        if (p->hasinit[j] && (!card_only || cardreg(j)) &&
+            !setregval(m,p,j,p->init[j])) return 0;
+    return 1;
+}
+
+static char *commandarg(char *s, const char *cmd) {
+    char *p = s;
+    while(*cmd && *p &&
+          toupper((unsigned char)*p) == toupper((unsigned char)*cmd)) {
+        p++;
+        cmd++;
+    }
+    if (*cmd || (*p && !isspace((unsigned char)*p))) return NULL;
+    while(isspace((unsigned char)*p)) p++;
+    return p;
+}
+
+static int loadcard(struct mach *m, struct prog *p, const char *path) {
+    struct prog next;
+    struct num zero = dint(0);
+    int j;
+    if (!load(path,&next)) return 0;
+    *p = next;
+    for (j = R_D; j <= R_FS; j++) m->reg[j] = zero;
+    for (j = 2; j < 5; j++) m->split[j] = 0;
+    set_used_splits(m,p,1);
+    return apply_initial_regs(m,p,1);
+}
+
+static int resume_stop(struct mach *m, int can_resume) {
+    if (!can_resume) {
+        fprintf(stderr,"no stopped program location to resume; select a routine key\n");
+        return P101_ERR;
+    }
+    m->pc++;
+    return P101_NEXT;
+}
+
+static int operator_stop(struct mach *m, struct prog *p) {
+    char line[MAX_LINE], copy[MAX_LINE], key[MAX_NAME*2], *s, *comment, *arg;
+    struct num value;
+    struct ins in;
+    int can_resume = m->pc >= 0 && m->pc < p->nins;
+    while(fgets(line,sizeof(line),m->input)) {
+        comment = strchr(line,';');
+        if (comment) *comment = '\0';
+        s = trim(line);
+        if (!s[0]) continue;
+        arg = commandarg(s,"CARD");
+        if (arg) {
+            if (!arg[0]) {
+                fprintf(stderr,"CARD requires a program path\n");
+                return P101_ERR;
+            }
+            if (!loadcard(m,p,arg)) return P101_ERR;
+            m->pc = -1;
+            can_resume = 0;
+            continue;
+        }
+        arg = commandarg(s,"ENTER");
+        if (arg) {
+            if (!dparse(arg,&value) || !setregval(m,p,R_M,value)) {
+                fprintf(stderr,"invalid ENTER value: %s\n",arg);
+                return P101_ERR;
+            }
+            continue;
+        }
+        if (eq(s,"START") || eq(s,"S")) return resume_stop(m,can_resume);
+        if (dparse(s,&value)) {
+            if (!setregval(m,p,R_M,value)) return P101_ERR;
+            return resume_stop(m,can_resume);
+        }
+        snprintf(copy,sizeof(copy),"%s",s);
+        if (!keyfromline(copy,key,sizeof(key))) {
+            fprintf(stderr,"invalid input: %s\n",s);
+            return P101_ERR;
+        }
+        if (refpoint(key)) {
+            return jump(m,p,key);
+        }
+        if (!decodekey(key,0,&in)) {
+            fprintf(stderr,"invalid input: %s\n",s);
+            return P101_ERR;
+        }
+        if (in.op == I_INPUT) return resume_stop(m,can_resume);
+        if (in.op == I_GOTO) return jump(m,p,in.target);
+        if (in.op == I_IFPOS) {
+            if (!getregval(m,p,R_A,&value)) return P101_ERR;
+            if (value.n > 0) return jump(m,p,in.target);
+            return resume_stop(m,can_resume);
+        }
+        if (in.op == I_LIT || in.op == I_LITDIG || in.op == I_MARK) {
+            fprintf(stderr,"invalid manual key chord: %s\n",s);
+            return P101_ERR;
+        }
+        if (execins(m,p,in,0,1) == P101_ERR) return P101_ERR;
+    }
+    return P101_STOP;
+}
+
+static int startpoint(const struct prog *p, const char *text) {
+    char line[MAX_LINE], key[MAX_NAME*2], target[MAX_NAME];
+    struct ins in;
+    int pc;
+    snprintf(line,sizeof(line),"%s",text);
+    if (!keyfromline(line,key,sizeof(key))) {
+        fprintf(stderr,"invalid start origin %s\n",text);
+        return -1;
+    }
+    if (!key[1] && routine(key[0])) {
+        pc = entry(p,key[0]);
+        if (pc < 0) fprintf(stderr,"no entry point for %c\n",key[0]);
+        return pc;
+    }
+    if (refpoint(key)) {
+        pc = findlabel(p,key);
+        if (pc < 0) fprintf(stderr,"unknown label %s\n",key);
+        return pc;
+    }
+    if (!decodekey(key,0,&in) || in.op != I_GOTO) {
+        fprintf(stderr,"--start requires an unconditional origin or reference point\n");
+        return -1;
+    }
+    snprintf(target,sizeof(target),"%s",in.target);
+    pc = findlabel(p,target);
+    if (pc < 0) fprintf(stderr,"unknown label %s\n",target);
+    return pc;
+}
+
+/* Execute the instruction at the current program counter. */
+static int step(struct mach *m, struct prog *p) {
+    struct ins in = p->ins[m->pc];
+    if (m->trace) fprintf(stderr,"%03d %s\n",m->pc+1,in.key);
+    if (in.op == I_INPUT) return operator_stop(m,p);
+    return execins(m,p,in,1,0);
+}
+
 /* Initialize machine state and run until stop, error, or end of program. */
-static int run(const struct prog *p, int start, FILE *input, int trace) {
+static int run(struct prog *p, const char *start, FILE *input, int trace,
+               int decimals_override) {
     struct mach m;
-    int j, rc;
+    int rc;
     memset(&m,0,sizeof(m));
-    m.decimals = p->decimals;
+    m.decimals = decimals_override >= 0 ? decimals_override : p->decimals;
     m.input = input;
     m.trace = trace;
-    for (j = 0; j < 5; j++)
-        if (p->used[rightreg(j)] || p->used[leftreg(j)]) m.split[j] = 1;
-    for (j = 0; j < R_COUNT; j++)
-        if (p->hasinit[j] && !setregval(&m,p,j,p->init[j])) return 0;
-    m.pc = entry(p,start);
+    set_used_splits(&m,p,0);
+    if (!apply_initial_regs(&m,p,0)) return 0;
+    m.pc = startpoint(p,start);
     if (m.pc < 0) {
-        fprintf(stderr,"no entry point for %c\n",start);
         return 0;
     }
     while(m.pc >= 0 && m.pc < p->nins) {
@@ -931,22 +1249,75 @@ static int run(const struct prog *p, int start, FILE *input, int trace) {
     return 1;
 }
 
+static int calc(FILE *input, int decimals, int trace) {
+    struct prog p;
+    struct mach m;
+    char line[MAX_LINE], copy[MAX_LINE], key[MAX_NAME*2], *s, *comment, *arg;
+    struct num value;
+    struct ins in;
+    memset(&p,0,sizeof(p));
+    memset(&m,0,sizeof(m));
+    p.decimals = decimals;
+    m.decimals = decimals;
+    m.input = input;
+    m.trace = trace;
+    while(fgets(line,sizeof(line),input)) {
+        comment = strchr(line,';');
+        if (comment) *comment = '\0';
+        s = trim(line);
+        if (!s[0]) continue;
+        if (eq(s,"START") || eq(s,"S")) continue;
+        arg = commandarg(s,"ENTER");
+        if (arg) {
+            if (!dparse(arg,&value) || !setregval(&m,&p,R_M,value)) {
+                fprintf(stderr,"invalid ENTER value: %s\n",arg);
+                return 0;
+            }
+            continue;
+        }
+        if (dparse(s,&value)) {
+            if (!setregval(&m,&p,R_M,value)) return 0;
+            continue;
+        }
+        snprintf(copy,sizeof(copy),"%s",s);
+        if (!keyfromline(copy,key,sizeof(key)) || refpoint(key) ||
+            !decodekey(key,0,&in) || in.op == I_INPUT ||
+            in.op == I_GOTO || in.op == I_IFPOS ||
+            in.op == I_LIT || in.op == I_LITDIG || in.op == I_MARK) {
+            fprintf(stderr,"invalid calculator input: %s\n",s);
+            return 0;
+        }
+        if (trace) fprintf(stderr,"%s\n",in.key);
+        if (execins(&m,&p,in,0,1) == P101_ERR) return 0;
+    }
+    return 1;
+}
+
 static void usage(FILE *fp) {
-    fprintf(fp,"Usage: p101 [--start V|W|Y|Z] [--input FILE] [--trace] program.p101\n");
+    fprintf(fp,"Usage: p101 [--start ORIGIN] [--decimals N] [--input FILE] [--trace] program.p101\n");
+    fprintf(fp,"       p101 --calc [--decimals N] [--input FILE] [--trace]\n");
 }
 
 int main(int argc, char **argv) {
     const char *path = NULL, *input_path = NULL;
-    int j, start = 'V', trace = 0, ok;
+    const char *start = "V";
+    int j, trace = 0, ok, calc_mode = 0, decimals_override = -1;
     FILE *input = stdin;
     struct prog p;
     for (j = 1; j < argc; j++) {
         if (!strcmp(argv[j],"--start") && j+1 < argc) {
-            start = argv[++j][0];
+            start = argv[++j];
+        } else if (!strcmp(argv[j],"--decimals") && j+1 < argc) {
+            if (!parsedecimals(argv[++j],&decimals_override)) {
+                usage(stderr);
+                return 2;
+            }
         } else if (!strcmp(argv[j],"--input") && j+1 < argc) {
             input_path = argv[++j];
         } else if (!strcmp(argv[j],"--trace")) {
             trace = 1;
+        } else if (!strcmp(argv[j],"--calc")) {
+            calc_mode = 1;
         } else if (!strcmp(argv[j],"-h") || !strcmp(argv[j],"--help")) {
             usage(stdout);
             return 0;
@@ -957,7 +1328,11 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
-    if (!path || !strchr("VWYZ",start)) {
+    if (calc_mode && path) {
+        usage(stderr);
+        return 2;
+    }
+    if (!calc_mode && !path) {
         usage(stderr);
         return 2;
     }
@@ -968,7 +1343,11 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
-    ok = load(path,&p) && run(&p,start,input,trace);
+    if (calc_mode) {
+        ok = calc(input,decimals_override >= 0 ? decimals_override : 0,trace);
+    } else {
+        ok = load(path,&p) && run(&p,start,input,trace,decimals_override);
+    }
     if (input != stdin) fclose(input);
     return ok ? 0 : 1;
 }

@@ -70,14 +70,86 @@ Assert-Matches $cosine "A\s+0,8660254042" "cosine"
 $cubic = Invoke-P101 -InputValues @("27") -ArgsList @("examples/cubic_root.p101")
 Assert-Matches $cubic "C\s+3" "cubic root"
 
-$polygon = Invoke-P101 -InputValues @("0", "0", "1", "1") -ArgsList @("examples/polygon_area.p101")
-Assert-Matches $polygon "E\s+1,41421[\s\S]*F/\s+0" "polygon area"
+$polygon = Invoke-P101 -InputValues @("0", "0", "0", "1", "1", "1", "1", "0", "W") -ArgsList @("examples/polygon_area.p101")
+Assert-Matches $polygon "A\s+1" "polygon area"
+
+$chainExample = Invoke-P101 -InputValues @() -ArgsList @("--input", "examples/chaining_square.input", "examples/chaining_square_card1.p101")
+Assert-Matches $chainExample "A\s+49" "chaining example"
 
 $Tmp = Join-Path $Root ".smoke_tmp"
 if (Test-Path $Tmp) {
     Remove-Item -Recurse -Force $Tmp
 }
 New-Item -ItemType Directory -Path $Tmp | Out-Null
+
+$manualStop = Invoke-P101 -InputValues @("ENTER 5", "D <M", "D #", "START") -ArgsList @("examples/factorial.p101")
+Assert-Matches $manualStop "D\s+5[\s\S]*D\s+120" "manual input at stop"
+
+$calc = Invoke-P101 -InputValues @("ENTER 12", "B <M", "ENTER 3", ">A", "B x") -ArgsList @("--calc")
+Assert-Matches $calc "A\s+36" "calculator mode"
+
+$origin = Join-Path $Tmp "origin.p101"
+@"
+.set B 9
+A V
+A #
+B V
+B #
+"@ | Set-Content -NoNewline -Encoding ascii $origin
+$originOutput = Invoke-P101 -InputValues @("") -ArgsList @("--start", "CV", $origin)
+Assert-Matches $originOutput "B\s+9" "full start origin"
+
+$override = Join-Path $Tmp "decimal-override.p101"
+@"
+.decimals 0
+A V
+  S
+  >A
+  S
+  :
+A #
+"@ | Set-Content -NoNewline -Encoding ascii $override
+$overrideOutput = Invoke-P101 -InputValues @("1", "8") -ArgsList @("--decimals", "3", $override)
+Assert-Matches $overrideOutput "A\s+0,125" "decimal override"
+
+$cardA = Join-Path $Tmp "card-a.p101"
+@"
+.decimals 0
+A V
+  S
+B <M
+  S
+"@ | Set-Content -NoNewline -Encoding ascii $cardA
+$cardB = Join-Path $Tmp "card-b.p101"
+@"
+.decimals 0
+A V
+B #
+"@ | Set-Content -NoNewline -Encoding ascii $cardB
+$chainOutput = Invoke-P101 -InputValues @("7", "CARD $cardB", "V") -ArgsList @($cardA)
+Assert-Matches $chainOutput "B\s+7" "card chaining"
+
+$clearM = Join-Path $Tmp "clear-m.p101"
+@"
+A V
+M *
+"@ | Set-Content -NoNewline -Encoding ascii $clearM
+Invoke-P101Failure -InputValues @("") -ArgsList @($clearM) `
+    -Pattern "register M cannot be cleared" -Name "clear M"
+
+$rsProtected = Join-Path $Tmp "rs-protected.p101"
+@"
+A V
+  S
+D <M
+R S
+R #
+"@ | Set-Content -NoNewline -Encoding ascii $rsProtected
+Invoke-P101Failure -InputValues @("5") -ArgsList @($rsProtected) `
+    -Pattern "register R holds an RS-saved D register pair" -Name "R S protected R"
+
+Invoke-P101Failure -InputValues @("not-a-number") -ArgsList @("examples/factorial.p101") `
+    -Pattern "invalid input: not-a-number" -Name "invalid input"
 
 $sqrt = Join-Path $Tmp "sqrt2.p101"
 @"
@@ -148,6 +220,18 @@ $lines += "F #"
 $lines | Set-Content -Encoding ascii $occupied
 Invoke-P101Failure -InputValues @("") -ArgsList @($occupied) `
     -Pattern "register F is occupied by program instructions" -Name "instruction data sharing"
+
+$shared = Join-Path $Tmp "shared-f.p101"
+$lines = @("A V", "S", "F <M", "W")
+1..44 | ForEach-Object { $lines += "/ #" }
+1..5 | ForEach-Object { $lines += "S" }
+$lines += "A W"
+$lines += "F #"
+$lines | Set-Content -Encoding ascii $shared
+$sharedOutput = Invoke-P101 -InputValues @("12345") -ArgsList @($shared)
+Assert-Matches $sharedOutput "F\s+12345" "shared instruction data storage"
+Invoke-P101Failure -InputValues @("123456") -ArgsList @($shared) `
+    -Pattern "register F capacity exceeded .*limit 5" -Name "shared storage capacity"
 
 Remove-Item -Recurse -Force $Tmp
 

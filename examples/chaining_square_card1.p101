@@ -1,0 +1,13 @@
+; Chaining demo, card 1.
+; Read x and y, store them in D and D/, save D D/ with R S,
+; then stop for the next card.
+
+.decimals 0
+
+A  V
+   S
+D  <M
+   S
+D/ <M
+R  S
+   S

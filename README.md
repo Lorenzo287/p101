@@ -234,8 +234,8 @@ use either `.` or `,` as the decimal separator.
 
 ## Chaining Example
 
-`examples/chaining_square_card1.p101` and
-`examples/chaining_square_card2.p101` demonstrate card chaining and the
+`examples/chaining_card1.p101` and
+`examples/chaining_card2.p101` demonstrate card chaining and the
 special `R S` handoff. Card 1 reads `x` and `y`, stores them in `D` and `D/`,
 executes `R S` to save that pair in `R`, then stops. The operator transcript
 loads card 2 and presses `V`; card 2 starts with `R S`, restoring `D` and `D/`,
@@ -244,14 +244,14 @@ then prints `(x + y)^2`.
 ```text
 3
 4
-CARD examples/chaining_square_card2.p101
+CARD examples/chaining_card2.p101
 V
 ```
 
 Run it with:
 
 ```sh
-p101 --input examples/chaining_square.input examples/chaining_square_card1.p101
+p101 --input examples/chaining.input examples/chaining_card1.p101
 ```
 
 The sample prints `A 49`.

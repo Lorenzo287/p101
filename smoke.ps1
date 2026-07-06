@@ -73,7 +73,7 @@ Assert-Matches $cubic "C\s+3" "cubic root"
 $polygon = Invoke-P101 -InputValues @("0", "0", "0", "1", "1", "1", "1", "0", "W") -ArgsList @("examples/polygon_area.p101")
 Assert-Matches $polygon "A\s+1" "polygon area"
 
-$chainExample = Invoke-P101 -InputValues @() -ArgsList @("--input", "examples/chaining_square.input", "examples/chaining_square_card1.p101")
+$chainExample = Invoke-P101 -InputValues @() -ArgsList @("--input", "examples/chaining.input", "examples/chaining_card1.p101")
 Assert-Matches $chainExample "A\s+49" "chaining example"
 
 $Tmp = Join-Path $Root ".smoke_tmp"

@@ -192,6 +192,14 @@ B/ #
 Invoke-P101Failure -InputValues @("123456789012") -ArgsList @($splitWhole) `
     -Pattern "cannot split register B" -Name "split whole-register overflow"
 
+$spacedSlash = Join-Path $Tmp "spaced-slash.p101"
+@"
+A V
+B / #
+"@ | Set-Content -NoNewline -Encoding ascii $spacedSlash
+Invoke-P101Failure -InputValues @("") -ArgsList @($spacedSlash) `
+    -Pattern "expected one key chord" -Name "reject spaced slash chord"
+
 $rightHalfOverflow = Join-Path $Tmp "right-half-overflow.p101"
 @"
 .init B/ 1

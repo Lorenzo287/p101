@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include "num.h"
 
@@ -13,6 +14,10 @@
 
 #define MAX_LINE 256
 #define MAX_NAME 32
+#define MAX_KEY_TOKENS 2
+#define MAX_DIRECTIVE_TOKENS 3
+
+static bool clicolor;
 
 /* === Program Model === */
 
@@ -90,6 +95,15 @@ static int eq(const char *a, const char *b) {
     return *a == '\0' && *b == '\0';
 }
 
+static void error_msg(bool red, const char *fmt, ...) {
+    va_list ap;
+    if (red) fputs("\033[31m",stderr);
+    va_start(ap,fmt);
+    vfprintf(stderr,fmt,ap);
+    va_end(ap);
+    if (red) fputs("\033[0m",stderr);
+}
+
 static int parsedecimals(const char *s, int *out) {
     while(isspace((unsigned char)*s)) s++;
     if (!*s) return 0;
@@ -132,13 +146,24 @@ static int stored_digits(struct num d) {
 /* Enforce the P101 register digit capacities. */
 static int checkfitcap(const char *name, int cap, struct num d) {
     if (stored_digits(d) <= cap) return 1;
-    fprintf(stderr,"register %s capacity exceeded (%d digits, limit %d)\n",
-            name,stored_digits(d),cap);
+    error_msg(clicolor,"register %s capacity exceeded (%d digits, limit %d)\n",
+              name,stored_digits(d),cap);
     return 0;
 }
 
 static int checkfit(int r, struct num d) {
     return checkfitcap(regname(r),regcap(r),d);
+}
+
+static int runtime_checkfitcap(const char *name, int cap, struct num d) {
+    if (stored_digits(d) <= cap) return 1;
+    error_msg(true,"register %s capacity exceeded (%d digits, limit %d)\n",
+                  name,stored_digits(d),cap);
+    return 0;
+}
+
+static int runtime_checkfit(int r, struct num d) {
+    return runtime_checkfitcap(regname(r),regcap(r),d);
 }
 
 /* Map program slots after the 48 core instructions into F/f/E/e/D/d. */
@@ -189,7 +214,7 @@ static int mark_instruction_regs(struct prog *p) {
         }
         if (p->hasinit[r]) {
             if (p->datacap[r] == 0) {
-                fprintf(stderr,"register %s is occupied by program instructions\n",regname(r));
+                error_msg(clicolor,"register %s is occupied by program instructions\n",regname(r));
                 return 0;
             }
             if (!checkfitcap(regname(r),p->datacap[r],p->init[r]))
@@ -241,7 +266,7 @@ static int wholeaccess(const struct machine *m, int r) {
 static int canreadreg(const struct machine *m, const struct prog *p, int r) {
     int pair = regpair(r);
     if (r == R_R && m->rs_saved) {
-        fprintf(stderr,"register R holds an RS-saved D register pair\n");
+        error_msg(true,"register R holds an RS-saved D register pair\n");
         return 0;
     }
     if (pair >= 0 && wholeaccess(m,r)) {
@@ -249,26 +274,26 @@ static int canreadreg(const struct machine *m, const struct prog *p, int r) {
     } else if (hasregdata(p,r)) {
         return 1;
     }
-    fprintf(stderr,"register %s is occupied by program instructions\n",regname(r));
+    error_msg(true,"register %s is occupied by program instructions\n",regname(r));
     return 0;
 }
 
 static int canwritereg(const struct machine *m, const struct prog *p, int r, struct num d) {
     if (r == R_R && m->rs_saved) {
         if (m->rs_protected) {
-            fprintf(stderr,"register R holds an RS-saved D register pair\n");
+            error_msg(true,"register R holds an RS-saved D register pair\n");
             return 0;
         }
-        return checkfit(r,d);
+        return runtime_checkfit(r,d);
     }
     if (!canreadreg(m,p,r)) return 0;
     int cap = regdatacap(m,p,r);
-    return checkfitcap(regname(r),cap,d);
+    return runtime_checkfitcap(regname(r),cap,d);
 }
 
 static int spliterror(int r, struct num d) {
-    fprintf(stderr,"cannot split register %s containing %d digits (limit 11)\n",
-            regname(r),stored_digits(d));
+    error_msg(true,"cannot split register %s containing %d digits (limit 11)\n",
+                  regname(r),stored_digits(d));
     return 0;
 }
 
@@ -321,7 +346,7 @@ static int clearregval(struct machine *m, const struct prog *p, int r) {
     int pair = regpair(r);
     struct num zero = dint(0);
     if (r == R_M || r == R_R) {
-        fprintf(stderr,"register %s cannot be cleared\n",regname(r));
+        error_msg(true,"register %s cannot be cleared\n",regname(r));
         return 0;
     }
     if (pair < 0) return setregval(m,p,r,zero);
@@ -346,14 +371,12 @@ static int clearregval(struct machine *m, const struct prog *p, int r) {
 static int regid(const char *s) {
     static int full[] = {R_B,R_C,R_D,R_E,R_F};
     static int split[] = {R_b,R_c,R_d,R_e,R_f};
-    char base;
     if (s[0] == '\0') return -1;
-    base = (char)toupper((unsigned char)s[0]);
-    int isplit = s[1] == '/' && s[2] == '\0';
-    if (s[1] == '\0') isplit = s[0] >= 'b' && s[0] <= 'f';
-    else if (!isplit) return -1;
-    if (base >= 'B' && base <= 'F') return isplit ? split[base-'B'] : full[base-'B'];
-    if (isplit) return -1;
+    char base = s[0];
+    if (s[1] == '\0' && base >= 'b' && base <= 'f') return split[base - 'b'];
+    if (s[1] == '/' && s[2] == '\0' && base >= 'B' && base <= 'F') return split[base - 'B'];
+    if (s[1] != '\0') return -1;
+    if (base >= 'B' && base <= 'F') return full[base - 'B'];
     if (base == 'A') return R_A;
     if (base == 'M') return R_M;
     if (base == 'R') return R_R;
@@ -382,7 +405,7 @@ static int refpoint(const char *s) {
 
 static int addlabel(struct prog *p, const char *name, int pc, int line) {
     if (p->nlabels == MAX_LABELS) {
-        fprintf(stderr,"line %d: too many labels\n",line);
+        error_msg(clicolor,"line %d: too many labels\n",line);
         return 0;
     }
     snprintf(p->labels[p->nlabels].name,MAX_NAME,"%s",name);
@@ -405,7 +428,7 @@ static int entry(const struct prog *p, int key) {
 
 static int addins(struct prog *p, struct ins in) {
     if (p->nins == MAX_INS) {
-        fprintf(stderr,"line %d: too many instructions for P101 memory\n",in.line);
+        error_msg(clicolor,"line %d: too many instructions for P101 memory\n",in.line);
         return 0;
     }
     p->ins[p->nins++] = in;
@@ -561,25 +584,25 @@ static int decodekey(const char *key, int line, struct ins *in) {
 /* === Source File Parsing === */
 
 /* Parse setup metadata such as decimal wheel and initial register values. */
-static int directive(struct prog *p, char **argv, int argc, int line) {
-    if (eq(argv[0],".wheel")) {
+static int directive(struct prog *p, char **tokens, int ntok, int line) {
+    if (eq(tokens[0],".wheel")) {
         int decimals;
-        if (argc != 2 || !parsedecimals(argv[1],&decimals)) return 0;
+        if (ntok != 2 || !parsedecimals(tokens[1],&decimals)) return 0;
         p->decimals = decimals;
         return 1;
     }
-    if (eq(argv[0],".init")) {
-        if (argc != 3) return 0;
-        int r = regid(argv[1]);
+    if (eq(tokens[0],".init")) {
+        if (ntok != 3) return 0;
+        int r = regid(tokens[1]);
         if (r < 0) return 0;
         struct num value;
-        if (!dparse(argv[2],&value)) return 0;
+        if (!dparse(tokens[2],&value)) return 0;
         if (!checkfit(r,value)) return 0;
         p->init[r] = value;
         p->hasinit[r] = true;
         return 1;
     }
-    fprintf(stderr,"line %d: unknown directive %s\n",line,argv[0]);
+    error_msg(clicolor,"line %d: unknown directive %s\n",line,tokens[0]);
     return 0;
 }
 
@@ -597,21 +620,21 @@ static int parsekey(struct prog *p, const char *key, int line) {
     }
     struct ins in;
     if (!decodekey(key,line,&in)) {
-        fprintf(stderr,"line %d: cannot parse key chord %s\n",line,key);
+        error_msg(clicolor,"line %d: cannot parse key chord %s\n",line,key);
         return 0;
     }
     return addins(p,in);
 }
 
-static int words(char *s, char **argv, int max) {
-    int argc = 0;
+static int tokwords(char *s, char **tokens, int tokmax) {
+    int ntok = 0;
     char *t = strtok(s," \t\r\n");
     while(t) {
-        if (argc == max) return -1;
-        argv[argc++] = t;
+        if (ntok == tokmax) return -1;
+        tokens[ntok++] = t;
         t = strtok(NULL," \t\r\n");
     }
-    return argc;
+    return ntok;
 }
 
 static void upper_routine_key(char *key) {
@@ -626,21 +649,16 @@ static int keyfromline(char *line, char *key, size_t size) {
     if (comment) *comment = '\0';
     line = trim(line);
     if (!line[0]) return 0;
-    char *argv[4];
-    int argc = words(line,argv,4);
-    if (argc <= 0) return 0;
-    if (argc == 1) {
-        snprintf(key,size,"%s",argv[0]);
+    char *tokens[MAX_KEY_TOKENS];
+    int ntok = tokwords(line,tokens,MAX_KEY_TOKENS);
+    if (ntok <= 0) return 0;
+    if (ntok == 1) {
+        snprintf(key,size,"%s",tokens[0]);
         upper_routine_key(key);
         return 1;
     }
-    if (argc == 2) {
-        snprintf(key,size,"%s%s",argv[0],argv[1]);
-        upper_routine_key(key);
-        return 1;
-    }
-    if (argc == 3 && !strcmp(argv[1],"/")) {
-        snprintf(key,size,"%s/%s",argv[0],argv[2]);
+    if (ntok == 2) {
+        snprintf(key,size,"%s%s",tokens[0],tokens[1]);
         upper_routine_key(key);
         return 1;
     }
@@ -653,44 +671,39 @@ static int parseline(struct prog *p, char *line, int lineno) {
     if (comment) *comment = '\0';
     line = trim(line);
     if (!line[0]) return 1;
-    char *argv[4];
-    int argc = words(line,argv,4);
-    if (argc <= 0) {
-        fprintf(stderr,"line %d: invalid syntax\n",lineno);
+    char *tokens[MAX_DIRECTIVE_TOKENS];
+    int ntok = tokwords(line,tokens,MAX_DIRECTIVE_TOKENS);
+    if (ntok <= 0) {
+        error_msg(clicolor,"line %d: invalid syntax\n",lineno);
         return 0;
     }
-    if (argv[0][0] == '.') {
-        if (!directive(p,argv,argc,lineno)) {
-            fprintf(stderr,"line %d: invalid directive\n",lineno);
+    if (tokens[0][0] == '.') {
+        if (!directive(p,tokens,ntok,lineno)) {
+            error_msg(clicolor,"line %d: invalid directive\n",lineno);
             return 0;
         }
         return 1;
     }
-    if (argc == 1) return parsekey(p,argv[0],lineno);
-    if (argc == 2) {
+    if (ntok == 1) return parsekey(p,tokens[0],lineno);
+    if (ntok == 2) {
         char key[MAX_NAME*2];
-        snprintf(key,sizeof(key),"%s%s",argv[0],argv[1]);
+        snprintf(key,sizeof(key),"%s%s",tokens[0],tokens[1]);
         return parsekey(p,key,lineno);
     }
-    if (argc == 3 && !strcmp(argv[1],"/")) {
-        char key[MAX_NAME*2];
-        snprintf(key,sizeof(key),"%s/%s",argv[0],argv[2]);
-        return parsekey(p,key,lineno);
-    }
-    fprintf(stderr,"line %d: expected one key chord\n",lineno);
+    error_msg(clicolor,"line %d: expected one key chord\n",lineno);
     return 0;
 }
 
 /* Load and validate a source file before execution starts. */
 static int load(const char *path, struct prog *p) {
-    char line[MAX_LINE];
-    int lineno = 0;
     FILE *fp = fopen(path,"r");
     if (!fp) {
-        fprintf(stderr,"cannot open %s\n",path);
+        error_msg(clicolor,"cannot open %s\n",path);
         return 0;
     }
     memset(p,0,sizeof(*p));
+    int lineno = 0;
+    char line[MAX_LINE];
     while(fgets(line,sizeof(line),fp)) {
         if (!parseline(p,line,++lineno)) {
             fclose(fp);
@@ -736,7 +749,7 @@ static int literal(struct machine *m, const struct prog *p) {
 }
 
 static int numoverflow(const struct machine *m) {
-    fprintf(stderr,"numeric overflow at step %d\n",m->pc+1);
+    error_msg(true,"numeric overflow at step %d\n",m->pc+1);
     return 0;
 }
 
@@ -771,7 +784,7 @@ static int binary(struct machine *m, const struct prog *p, int r, int op) {
         struct num q;
         if (!getregval(m,p,R_A,&exact)) return 0;
         if (dzerop(src)) {
-            fprintf(stderr,"division by zero at step %d\n",m->pc+1);
+            error_msg(true,"division by zero at step %d\n",m->pc+1);
             return 0;
         }
         if (!ddiv(exact,src,m->decimals,&q)) {
@@ -791,7 +804,7 @@ static int binary(struct machine *m, const struct prog *p, int r, int op) {
 static int jump(struct machine *m, const struct prog *p, const char *target) {
     int pc = findlabel(p,target);
     if (pc < 0) {
-        fprintf(stderr,"unknown label %s\n",target);
+        error_msg(true,"unknown label %s\n",target);
         return P101_ERR;
     }
     m->pc = pc;
@@ -804,7 +817,7 @@ static int printreg(struct machine *m, const struct prog *p, int r) {
     if (!getregval(m,p,r,&value)) return 0;
     if (!dstr(value,m->decimals,r != R_R,text,sizeof(text)))
         return numoverflow(m);
-    printf("%s\t%s\n",regname(r),text);
+    printf("%s#%s%s\n",regname(r),(regname(r)[1]) ? "" : " ",text);
     return 1;
 }
 
@@ -825,12 +838,12 @@ static int execins(struct machine *m, const struct prog *p, struct ins in,
         return P101_STOP;
     case I_LIT:
         if (!literal(m,p)) {
-            fprintf(stderr,"invalid literal sequence at step %d\n",m->pc+1);
+            error_msg(true,"invalid literal sequence at step %d\n",m->pc+1);
             return P101_ERR;
         }
         return P101_NEXT;
     case I_LITDIG:
-        fprintf(stderr,"literal digit outside A/< sequence at step %d\n",m->pc+1);
+        error_msg(true,"literal digit outside A/< sequence at step %d\n",m->pc+1);
         return P101_ERR;
     case I_STORE:
         if (!getregval(m,p,R_M,&value) || !setregval(m,p,in.reg,value))
@@ -988,7 +1001,11 @@ static char *commandarg(char *s, const char *cmd) {
 static int loadcard(struct machine *m, struct prog *p, const char *path) {
     struct prog next;
     struct num zero = dint(0);
-    if (!load(path,&next)) return 0;
+    bool old_color_errors = clicolor;
+    clicolor = true;
+    int ok = load(path,&next);
+    clicolor = old_color_errors;
+    if (!ok) return 0;
     *p = next;
     /* New cards replace the program-bearing D/E/F registers only. */
     for (int j = R_D; j <= R_f; j++) m->reg[j] = zero;
@@ -999,7 +1016,7 @@ static int loadcard(struct machine *m, struct prog *p, const char *path) {
 
 static int resume_stop(struct machine *m, bool can_resume) {
     if (!can_resume) {
-        fprintf(stderr,"no stopped program location to resume; select a routine key\n");
+        error_msg(true,"no stopped program location to resume; select a routine key\n");
         return P101_ERR;
     }
     m->pc++;
@@ -1009,6 +1026,7 @@ static int resume_stop(struct machine *m, bool can_resume) {
 static int operator_stop(struct machine *m, struct prog *p) {
     char line[MAX_LINE], copy[MAX_LINE], key[MAX_NAME*2], *s, *comment, *arg;
     bool can_resume = m->pc >= 0 && m->pc < p->nins;
+	printf("S  ");
     while(fgets(line,sizeof(line),m->input)) {
         comment = strchr(line,';');
         if (comment) *comment = '\0';
@@ -1017,7 +1035,7 @@ static int operator_stop(struct machine *m, struct prog *p) {
         arg = commandarg(s,"CARD");
         if (arg) {
             if (!arg[0]) {
-                fprintf(stderr,"CARD requires a program path\n");
+                error_msg(true,"CARD requires a program path\n");
                 return P101_ERR;
             }
             if (!loadcard(m,p,arg)) return P101_ERR;
@@ -1033,7 +1051,7 @@ static int operator_stop(struct machine *m, struct prog *p) {
         }
         snprintf(copy,sizeof(copy),"%s",s);
         if (!keyfromline(copy,key,sizeof(key))) {
-            fprintf(stderr,"invalid input: %s\n",s);
+            error_msg(true,"invalid input: %s\n",s);
             return P101_ERR;
         }
         if (refpoint(key)) {
@@ -1041,7 +1059,7 @@ static int operator_stop(struct machine *m, struct prog *p) {
         }
         struct ins in;
         if (!decodekey(key,0,&in)) {
-            fprintf(stderr,"invalid input: %s\n",s);
+            error_msg(true,"invalid input: %s\n",s);
             return P101_ERR;
         }
         if (in.op == I_INPUT) return resume_stop(m,can_resume);
@@ -1051,7 +1069,7 @@ static int operator_stop(struct machine *m, struct prog *p) {
             if (dpos(value)) return jump(m,p,in.target);
             return resume_stop(m,can_resume);
         }
-        fprintf(stderr,"invalid operator input: %s\n",s);
+        error_msg(true,"invalid operator input: %s\n",s);
         return P101_ERR;
     }
     return P101_STOP;
@@ -1061,26 +1079,26 @@ static int startpoint(const struct prog *p, const char *text) {
     char line[MAX_LINE], key[MAX_NAME*2];
     snprintf(line,sizeof(line),"%s",text);
     if (!keyfromline(line,key,sizeof(key))) {
-        fprintf(stderr,"invalid start origin %s\n",text);
+        error_msg(true,"invalid start origin %s\n",text);
         return -1;
     }
     if (!key[1] && routine(key[0])) {
         int pc = entry(p,key[0]);
-        if (pc < 0) fprintf(stderr,"no entry point for %c\n",key[0]);
+        if (pc < 0) error_msg(true,"no entry point for %c\n",key[0]);
         return pc;
     }
     if (refpoint(key)) {
         int pc = findlabel(p,key);
-        if (pc < 0) fprintf(stderr,"unknown label %s\n",key);
+        if (pc < 0) error_msg(true,"unknown label %s\n",key);
         return pc;
     }
     struct ins in;
     if (!decodekey(key,0,&in) || in.op != I_GOTO) {
-        fprintf(stderr,"--start requires an unconditional origin or reference point\n");
+        error_msg(true,"--start requires an unconditional origin or reference point\n");
         return -1;
     }
     int pc = findlabel(p,in.target);
-    if (pc < 0) fprintf(stderr,"unknown label %s\n",in.target);
+    if (pc < 0) error_msg(true,"unknown label %s\n",in.target);
     return pc;
 }
 
@@ -1120,9 +1138,6 @@ static void usage(FILE *fp) {
 int main(int argc, char **argv) {
     const char *prog_path = NULL, *input_path = NULL;
     const char *start = "V";
-    int ok;
-    FILE *input = stdin;
-    struct prog p;
     for (int j = 1; j < argc; j++) {
         if (!strcmp(argv[j],"--start") && j+1 < argc) {
             start = argv[++j];
@@ -1142,6 +1157,7 @@ int main(int argc, char **argv) {
         usage(stderr);
         return 2;
     }
+    FILE *input = stdin;
     if (input_path) {
         input = fopen(input_path,"r");
         if (!input) {
@@ -1149,7 +1165,8 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
-    ok = load(prog_path,&p) && run(&p,start,input);
+    struct prog p;
+    int ok = load(prog_path,&p) && run(&p,start,input);
     if (input != stdin) fclose(input);
     return ok ? 0 : 1;
 }

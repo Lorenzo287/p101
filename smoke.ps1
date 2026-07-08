@@ -82,15 +82,9 @@ if (Test-Path $Tmp) {
 }
 New-Item -ItemType Directory -Path $Tmp | Out-Null
 
-$manualStop = Invoke-P101 -InputValues @("ENTER 5", "D <M", "D #", "START") -ArgsList @("examples/factorial.p101")
-Assert-Matches $manualStop "D\s+5[\s\S]*D\s+120" "manual input at stop"
-
-$calc = Invoke-P101 -InputValues @("ENTER 12", "B <M", "ENTER 3", ">A", "B x") -ArgsList @("--calc")
-Assert-Matches $calc "A\s+36" "calculator mode"
-
 $origin = Join-Path $Tmp "origin.p101"
 @"
-.set B 9
+.init B 9
 A V
 A #
 B V
@@ -99,22 +93,22 @@ B #
 $originOutput = Invoke-P101 -InputValues @("") -ArgsList @("--start", "CV", $origin)
 Assert-Matches $originOutput "B\s+9" "full start origin"
 
-$override = Join-Path $Tmp "decimal-override.p101"
+$wheel = Join-Path $Tmp "decimal-wheel.p101"
 @"
-.decimals 0
+.wheel 3
 A V
   S
   >A
   S
   :
 A #
-"@ | Set-Content -NoNewline -Encoding ascii $override
-$overrideOutput = Invoke-P101 -InputValues @("1", "8") -ArgsList @("--decimals", "3", $override)
-Assert-Matches $overrideOutput "A\s+0,125" "decimal override"
+"@ | Set-Content -NoNewline -Encoding ascii $wheel
+$wheelOutput = Invoke-P101 -InputValues @("1", "8") -ArgsList @($wheel)
+Assert-Matches $wheelOutput "A\s+0,125" "decimal wheel"
 
 $cardA = Join-Path $Tmp "card-a.p101"
 @"
-.decimals 0
+.wheel 0
 A V
   S
 B <M
@@ -122,7 +116,7 @@ B <M
 "@ | Set-Content -NoNewline -Encoding ascii $cardA
 $cardB = Join-Path $Tmp "card-b.p101"
 @"
-.decimals 0
+.wheel 0
 A V
 B #
 "@ | Set-Content -NoNewline -Encoding ascii $cardB
@@ -153,7 +147,7 @@ Invoke-P101Failure -InputValues @("not-a-number") -ArgsList @("examples/factoria
 
 $sqrt = Join-Path $Tmp "sqrt2.p101"
 @"
-.decimals 15
+.wheel 15
 A V
   S
 B <M
@@ -165,7 +159,7 @@ Assert-Matches $sqrtOutput "A\s+1,414213562373095" "integer sqrt"
 
 $splitOverflow = Join-Path $Tmp "split-overflow.p101"
 @"
-.set B/ 123456789012
+.init B/ 123456789012
 A V
   S
 "@ | Set-Content -NoNewline -Encoding ascii $splitOverflow
@@ -184,7 +178,7 @@ Invoke-P101Failure -InputValues @("123456789012") -ArgsList @($splitWhole) `
 
 $rightHalfOverflow = Join-Path $Tmp "right-half-overflow.p101"
 @"
-.set B/ 1
+.init B/ 1
 A V
   S
 B <M
@@ -194,9 +188,9 @@ Invoke-P101Failure -InputValues @("123456789012") -ArgsList @($rightHalfOverflow
 
 $overlay = Join-Path $Tmp "overlay-clear.p101"
 @"
-.decimals 0
-.set B 7
-.set B/ 3
+.wheel 0
+.init B 7
+.init B/ 3
 A V
 B #
 B/ #

@@ -1,7 +1,7 @@
 ; Area of polygon with n vertices
 ; Max 5 digits per coordinate
 
-.decimals 3
+.wheel 3
 
 A  V
    S

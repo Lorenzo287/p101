@@ -2,7 +2,7 @@
 ; Read x and y, store them in D and D/, save D D/ with R S,
 ; then stop for the next card.
 
-.decimals 0
+.wheel 0
 
 A  V
    S

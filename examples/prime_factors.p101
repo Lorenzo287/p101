@@ -1,6 +1,6 @@
 ; Prime factorization by trial division.
 
-.decimals 10
+.wheel 10
 
 A  V
    S

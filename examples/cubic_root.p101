@@ -1,10 +1,10 @@
 ; Cube root by fixed-point iteration
 ; x = (x + N / x^2) / 2.
 
-.decimals 9
-.set D/ 1
-.set E/ 2
-.set F/ 30
+.wheel 9
+.init D/ 1
+.init E/ 2
+.init F/ 30
 
 A  V
    S

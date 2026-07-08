@@ -125,20 +125,16 @@ the next instruction.
 ### Data Movement And Service Keys
 
 `S` stops and releases the operator transcript. A bare numeric input value is
-stored in `M` and execution continues after `S`. `ENTER VALUE` stores a number
-in `M` without restarting, so manual key chords can be performed while the
-program is stopped. `START` or `S` restarts without entering a new number.
-Routine and jump origins such as `W`, `C W`, or `D Z` resume from the selected
-reference point.
+stored in `M` and execution continues after `S`. `START` or `S` restarts
+without entering a new number. Routine and jump origins such as `W`, `C W`, or
+`D Z` resume from the selected reference point.
 
-While stopped, non-jump key chords such as `B <M`, `A #`, or `B x` execute in
-manual mode without advancing the stored program. `CARD FILE` loads another
-program card, preserving `M`, `A`, `R`, `B`, `C`, and the decimal-wheel
-setting while refreshing `D`, `E`, `F`, and their splits from the new card.
-Use `R S` before the card load, and again at the start of the next card, to
-carry `D` and `D/` through `R` using the P101 chaining convention. Select a
-routine key afterward to continue. With `--input FILE`, input items are read
-from the file; EOF stops the program.
+`CARD FILE` loads another program card, preserving `M`, `A`, `R`, `B`, `C`,
+and the decimal-wheel setting while refreshing `D`, `E`, `F`, and their splits
+from the new card. Use `R S` before the card load, and again at the start of
+the next card, to carry `D` and `D/` through `R` using the P101 chaining
+convention. Select a routine key afterward to continue. With `--input FILE`,
+input items are read from the file; EOF stops the program.
 
 `REG <M` copies `M` into `REG`; `REG >A` copies `REG` into `A`; and
 `REG ><` exchanges `REG` and `A`. The special form `R ><` copies `R` into
@@ -160,10 +156,6 @@ stores `sqrt(REG)` in `A`, the remainder `REG - A * A` in `R`, and `2 * A` in
 
 The arithmetic forms are `REG +`, `REG -`, `REG x`, `REG :`, and
 `REG sqrt`. `REG #` prints a register, while `/ #` prints a blank tape line.
-
-In manual/calculator operation, multiplication, division, and square root print
-the resulting `A` value automatically. Addition and subtraction do not; print
-`A` explicitly with `A #`.
 
 ## Literal Constants
 
@@ -216,21 +208,15 @@ E  >A
 Directives are interpreter conveniences, not P101 keys. Numeric values may
 use either `.` or `,` as the decimal separator.
 
-- `.decimals N` or `decimals N`: set decimal precision, from `0` to `15`;
-  default is `0`. This models setting the decimal wheel before running; the
-  CLI `--decimals N` option overrides it.
-- `.set REG VALUE` or `set REG VALUE`: initialize a register before execution.
+- `.wheel N`: set decimal precision, from `0` to `15`; default is `0`. This
+  models setting the decimal wheel before running.
+- `.init REG VALUE`: initialize a register before execution.
 
 ## CLI Options
 
 - `--start ORIGIN`: select the start origin or reference point; default is
   `V`. Examples: `W`, `CW`, `AW`.
-- `--decimals N`: override the program decimal-wheel setting, from `0` to
-  `15`.
 - `--input FILE`: read operator transcript items from a file.
-- `--trace`: print executed instructions to stderr.
-- `--calc`: run without a stored program as a manual calculator, reading
-  numbers, `ENTER VALUE`, and key chords from stdin or `--input`.
 
 ## Chaining Example
 

@@ -1,11 +1,11 @@
 ; log10(X) with X in scientific notation X = x * 10^m
 ; first input m, then x
 
-.decimals 10
-.set E/ 13,897423454
-.set E  10
-.set F/ 2,7975
-.set F  4,632428
+.wheel 10
+.init E/ 13,897423454
+.init E  10
+.init F/ 2,7975
+.init F  4,632428
 
 A  V
    S

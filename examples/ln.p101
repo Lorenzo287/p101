@@ -1,11 +1,11 @@
 ; ln(X) 
 
-.decimals 9
-.set D/  10
-.set E   15,999999989
-.set E/  5,333340717
-.set F   3,19870438
-.set F/  2,3695603
+.wheel 9
+.init D/  10
+.init E   15,999999989
+.init E/  5,333340717
+.init F   3,19870438
+.init F/  2,3695603
 
 A  V
    S

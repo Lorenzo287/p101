@@ -1,15 +1,15 @@
 ; Taylor-polynomial sine/cosine in degrees.
 ; V computes sine, W computes cosine.
 
-.decimals 10
-.set B/ 57,2957795
-.set C/ -0,5
-.set D/ -0,0001984127
-.set D 0,0416666667
-.set E/ 0,0083333333
-.set E 0,0000248016
-.set F/ -0,1666666667
-.set F -0,0013888889
+.wheel 10
+.init B/ 57,2957795
+.init C/ -0,5
+.init D/ -0,0001984127
+.init D 0,0416666667
+.init E/ 0,0083333333
+.init E 0,0000248016
+.init F/ -0,1666666667
+.init F -0,0013888889
 
 A  V
    S

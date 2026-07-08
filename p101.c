@@ -4,15 +4,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "num.h"
+
 #define CORE_INS 48      // instructions stored in p1, p2
 #define MAX_INS 120      // extended with D, E, F
-#define OVERFLOW_INS 12  // max ins when sharing a reg with data
+#define OVERFLOW_HALF_INS 12  // instruction slots in one D/E/F half-register
 #define MAX_LABELS 128
 
 #define MAX_LINE 256
 #define MAX_NAME 32
 
-__extension__ typedef __int128 i128;
+/* === Program Model === */
 
 enum { P101_ERR = -1, P101_STOP, P101_NEXT };
 
@@ -29,11 +31,6 @@ enum op {
     I_CLEAR, I_PRINT, I_NL, I_GOTO, I_IFPOS, I_RS
 };
 
-struct num {
-    i128 n;     // integer coefficient
-    int scale;  // decimal places
-};
-
 /* One parsed program instruction. */
 struct ins {
     enum op op;
@@ -42,6 +39,7 @@ struct ins {
     // const literal generation
     int lit_digit;
     bool lit_point, lit_last, lit_neg;
+    // jump target
     char target[MAX_NAME];
 };
 
@@ -75,170 +73,8 @@ struct machine {
     FILE *input;
 };
 
-/* Decimal numbers: integer coefficient plus decimal scale. */
-static i128 pow10i(int n) {
-    i128 v = 1;
-    while(n-- > 0) v *= 10;
-    return v;
-}
+/* === Text Helpers === */
 
-static struct num dnew(i128 n, int scale) {
-    struct num d = {n,scale};
-    if (d.n == 0) {
-        d.scale = 0;
-        return d;
-    }
-    while(d.scale > 0 && d.n % 10 == 0) {
-        d.n /= 10;
-        d.scale--;
-    }
-    return d;
-}
-
-static struct num dint(int n) {
-    return dnew(n,0);
-}
-
-static struct num dscale(struct num d, int scale) {
-    if (d.scale < scale) d.n *= pow10i(scale-d.scale);
-    else if (d.scale > scale) d.n /= pow10i(d.scale-scale);
-    return dnew(d.n,scale);
-}
-
-static struct num dadd(struct num a, struct num b) {
-    int scale = a.scale > b.scale ? a.scale : b.scale;
-    i128 an = a.n * pow10i(scale-a.scale);
-    i128 bn = b.n * pow10i(scale-b.scale);
-    return dnew(an+bn,scale);
-}
-
-static struct num dsub(struct num a, struct num b) {
-    int scale = a.scale > b.scale ? a.scale : b.scale;
-    i128 an = a.n * pow10i(scale-a.scale);
-    i128 bn = b.n * pow10i(scale-b.scale);
-    return dnew(an-bn,scale);
-}
-
-static struct num dmul(struct num a, struct num b) {
-    return dnew(a.n*b.n,a.scale+b.scale);
-}
-
-static int ddiv(struct num a, struct num b, int scale, struct num *q) {
-    i128 num = a.n, den = b.n;
-    if (b.n == 0) return 0;
-    int exp = b.scale + scale - a.scale;
-    if (exp >= 0) num *= pow10i(exp);
-    else den *= pow10i(-exp);
-    *q = dnew(num/den,scale);
-    return 1;
-}
-
-static i128 isqrt(i128 n) {
-    i128 lo = 0, hi = 1, mid;
-    if (n <= 0) return 0;
-    while(hi <= n/hi) hi *= 2;
-    while(lo+1 < hi) {
-        mid = lo + (hi-lo)/2;
-        if (mid <= n/mid) lo = mid;
-        else hi = mid;
-    }
-    return lo;
-}
-
-static struct num dsqrt(struct num d, int scale) {
-    i128 n = d.n < 0 ? -d.n : d.n;
-    int exp = 2*scale - d.scale;
-    if (exp >= 0) n *= pow10i(exp);
-    else n /= pow10i(-exp);
-    return dnew(isqrt(n),scale);
-}
-
-static struct num dfrac(struct num d) {
-    i128 unit;
-    if (d.scale == 0) return dint(0);
-    unit = pow10i(d.scale);
-    return dnew(d.n - (d.n/unit)*unit,d.scale);
-}
-
-/* Parse user/input decimal text into the normalized coefficient/scale form. */
-static int dparse(const char *s, struct num *out) {
-    bool neg = false, dot = false, any = false;
-    int scale = 0;
-    i128 n = 0;
-    while(isspace((unsigned char)*s)) s++;
-    if (*s == '+' || *s == '-') neg = *s++ == '-';
-    while(*s) {
-        if (isdigit((unsigned char)*s)) {
-            any = true;
-            n = n*10 + (*s-'0');
-            if (dot) scale++;
-        } else if ((*s == '.' || *s == ',') && !dot) {
-            dot = true;
-        } else if (!isspace((unsigned char)*s)) {
-            return 0;
-        }
-        s++;
-    }
-    if (!any) return 0;
-    *out = dnew(neg ? -n : n,scale);
-    return 1;
-}
-
-/* Convert an __int128 coefficient to decimal digits. */
-static void i128str(i128 v, char *buf, size_t size) {
-    char tmp[80];
-    bool neg = v < 0;
-    int pos = 0;
-    size_t out = 0;
-    if (size == 0) return;
-    if (neg) v = -v;
-    do {
-        tmp[pos++] = (char)('0' + v%10);
-        v /= 10;
-    } while(v && pos < (int)sizeof(tmp));
-    if (neg && out+1 < size) buf[out++] = '-';
-    while(pos && out+1 < size) buf[out++] = tmp[--pos];
-    buf[out] = '\0';
-}
-
-/* Convert a decimal value to the P101 comma-decimal print format. */
-static void dstr(struct num d, int scale, bool fixed, char *buf, size_t size) {
-    char digits[96], tmp[128];
-    int pos = 0;
-    i128 v;
-    if (fixed) d = dscale(d,scale);
-    if (d.n < 0) {
-        tmp[pos++] = '-';
-        v = -d.n;
-    } else {
-        v = d.n;
-    }
-    i128str(v,digits,sizeof(digits));
-    int len = (int)strlen(digits);
-    if (d.scale == 0) {
-        for (int j = 0; j < len; j++) tmp[pos++] = digits[j];
-    } else {
-        int intlen = len - d.scale;
-        if (intlen <= 0) {
-            tmp[pos++] = '0';
-            tmp[pos++] = ',';
-            for (int j = 0; j < -intlen; j++) tmp[pos++] = '0';
-            for (int j = 0; j < len; j++) tmp[pos++] = digits[j];
-        } else {
-            for (int j = 0; j < intlen; j++) tmp[pos++] = digits[j];
-            tmp[pos++] = ',';
-            for (int j = intlen; j < len; j++) tmp[pos++] = digits[j];
-        }
-    }
-    tmp[pos] = '\0';
-    if (!fixed) {
-        while(pos > 0 && tmp[pos-1] == '0') tmp[--pos] = '\0';
-        if (pos > 0 && tmp[pos-1] == ',') tmp[--pos] = '\0';
-    }
-    snprintf(buf,size,"%s",tmp);
-}
-
-/* Parser helpers. */
 static char *trim(char *s) {
     while(isspace((unsigned char)*s)) s++;
     size_t len = strlen(s);
@@ -265,6 +101,8 @@ static int parsedecimals(const char *s, int *out) {
     return 1;
 }
 
+/* === Register Layout And Overlay === */
+
 static int routine(int c) {
     return c == 'V' || c == 'W' || c == 'Y' || c == 'Z';
 }
@@ -287,23 +125,8 @@ static int regcap(int r) {
     return 22;
 }
 
-static int ndigits(i128 n) {
-    int digits = 1;
-    if (n < 0) n = -n;
-    while(n >= 10) {
-        n /= 10;
-        digits++;
-    }
-    return digits;
-}
-
 static int stored_digits(struct num d) {
-    int digits = ndigits(d.n);
-    return d.scale >= digits ? d.scale+1 : digits;
-}
-
-static int fitsreg(int r, struct num d) {
-    return stored_digits(d) <= regcap(r);
+    return dstoredigits(d);
 }
 
 /* Enforce the P101 register digit capacities. */
@@ -322,11 +145,11 @@ static int checkfit(int r, struct num d) {
 static int insreg(int pc) {
     static int order[] = {R_F,R_f,R_E,R_e,R_D,R_d};
     if (pc < CORE_INS) return -1;
-    int slot = (pc-CORE_INS)/OVERFLOW_INS;
+    int slot = (pc-CORE_INS)/OVERFLOW_HALF_INS;
     return slot < (int)(sizeof(order)/sizeof(order[0])) ? order[slot] : -1;
 }
 
-/* In an overflow half, leading S instructions reserve data digits. */
+/* In a mixed data/instruction half, each leading S reserves one data digit. */
 static int halfdatacap(const struct prog *p, int start, int count) {
     int cap = 0;
     for (int j = 0; j < count && start+j < p->nins; j++) {
@@ -343,8 +166,8 @@ static int hasregdata(const struct prog *p, int r) {
 /* Mark D/E/F register halves consumed by instruction overflow.
    The first 48 instructions are stored in p1/p2. Later instructions occupy
    F, f, E, e, D, d in 12-instruction chunks.
-   Leading S slots in an overflow half reserve numeric digit positions,
-   matching the P101 technique for sharing one half between data and code. */
+   Leading S slots reserve numeric digit positions, matching the P101
+   technique for sharing one half between data and code. */
 static int mark_instruction_regs(struct prog *p) {
     for (int pc = 0; pc < p->nins; pc++) {
         int r = insreg(pc);
@@ -361,7 +184,7 @@ static int mark_instruction_regs(struct prog *p) {
         }
         if (start >= 0) {
             int count = p->nins - start;
-            if (count > OVERFLOW_INS) count = OVERFLOW_INS;
+            if (count > OVERFLOW_HALF_INS) count = OVERFLOW_HALF_INS;
             p->datacap[r] = halfdatacap(p,start,count);
         }
         if (p->hasinit[r]) {
@@ -453,7 +276,7 @@ static int makesplit(struct machine *m, int pair) {
     int right = rightreg(pair), left = leftreg(pair);
     if (m->split[pair]) return 1;
     /* Splitting keeps the current whole value in the right half. */
-    if (!fitsreg(left,m->reg[right])) return spliterror(right,m->reg[right]);
+    if (stored_digits(m->reg[right]) > 11) return spliterror(right,m->reg[right]);
     m->reg[left] = dint(0);
     m->split[pair] = true;
     return 1;
@@ -511,7 +334,7 @@ static int clearregval(struct machine *m, const struct prog *p, int r) {
     }
     m->reg[r] = zero;
     if (m->split[pair]) {
-        if (m->reg[leftreg(pair)].n == 0 &&
+        if (dzerop(m->reg[leftreg(pair)]) &&
             !programsplit(p,pair))
             m->split[pair] = false;
         return 1;
@@ -521,7 +344,7 @@ static int clearregval(struct machine *m, const struct prog *p, int r) {
 }
 
 static int regid(const char *s) {
-    static int full[] = {R_A,R_B,R_C,R_D,R_E,R_F,R_M,R_R};
+    static int full[] = {R_B,R_C,R_D,R_E,R_F};
     static int split[] = {R_b,R_c,R_d,R_e,R_f};
     char base;
     if (s[0] == '\0') return -1;
@@ -529,7 +352,7 @@ static int regid(const char *s) {
     int isplit = s[1] == '/' && s[2] == '\0';
     if (s[1] == '\0') isplit = s[0] >= 'b' && s[0] <= 'f';
     else if (!isplit) return -1;
-    if (base >= 'B' && base <= 'F') return isplit ? split[base-'B'] : full[base-'A'];
+    if (base >= 'B' && base <= 'F') return isplit ? split[base-'B'] : full[base-'B'];
     if (isplit) return -1;
     if (base == 'A') return R_A;
     if (base == 'M') return R_M;
@@ -547,6 +370,8 @@ static int setreg(const char *prefix, enum reg *r) {
     *r = (enum reg)id;
     return 1;
 }
+
+/* === Instruction Decoding === */
 
 static int refpoint(const char *s) {
     size_t len = strlen(s);
@@ -630,6 +455,7 @@ static void decode_litdigit(struct ins *in, const char *prefix, const char *op) 
     int digit = litdigit(op);
     size_t len = strlen(prefix);
     if (digit < 0 || (len != 1 && !(len == 2 && prefix[1] == '/'))) return;
+    /* R/F continue a literal; D/E terminate it. Slash marks the decimal point. */
     if (!strchr("RFDE",prefix[0])) return;
     in->lit_digit = digit;
     in->lit_point = len == 2;
@@ -664,12 +490,11 @@ static int jumptarget(const char *key, bool *conditional, char *target) {
 
 /* Decode one normalized key chord into an executable instruction. */
 static int decodekey(const char *key, int line, struct ins *in) {
-    bool conditional;
-    char prefix[MAX_NAME], op[MAX_NAME];
     memset(in,0,sizeof(*in));
     in->reg = R_M;
     in->line = line;
     in->lit_digit = -1;
+    bool conditional;
     if (jumptarget(key,&conditional,in->target)) {
         in->op = conditional ? I_IFPOS : I_GOTO;
         return 1;
@@ -678,6 +503,7 @@ static int decodekey(const char *key, int line, struct ins *in) {
         in->op = I_RS;
         return 1;
     }
+    char prefix[MAX_NAME], op[MAX_NAME];
     if (!splitkey(key,prefix,op)) {
         return 0;
     }
@@ -731,6 +557,8 @@ static int decodekey(const char *key, int line, struct ins *in) {
     }
     return 1;
 }
+
+/* === Source File Parsing === */
 
 /* Parse setup metadata such as decimal wheel and initial register values. */
 static int directive(struct prog *p, char **argv, int argc, int line) {
@@ -787,7 +615,10 @@ static int words(char *s, char **argv, int max) {
 }
 
 static void upper_routine_key(char *key) {
-    if (key[0] && !key[1]) key[0] = (char)toupper((unsigned char)key[0]);
+    if (key[0] && !key[1]) {
+        char c = (char)toupper((unsigned char)key[0]);
+        if (routine(c)) key[0] = c;
+    }
 }
 
 static int keyfromline(char *line, char *key, size_t size) {
@@ -870,6 +701,8 @@ static int load(const char *path, struct prog *p) {
     return mark_instruction_regs(p);
 }
 
+/* === Instruction Execution === */
+
 /* Execute the original P101 constant-entry digit sequence into M. */
 static int literal(struct machine *m, const struct prog *p) {
     char digits[32], number[80];
@@ -902,6 +735,11 @@ static int literal(struct machine *m, const struct prog *p) {
     return 1;
 }
 
+static int numoverflow(const struct machine *m) {
+    fprintf(stderr,"numeric overflow at step %d\n",m->pc+1);
+    return 0;
+}
+
 /* Shared add/subtract/multiply/divide path with decimal-wheel truncation. */
 static int binary(struct machine *m, const struct prog *p, int r, int op) {
     struct num src;
@@ -910,33 +748,38 @@ static int binary(struct machine *m, const struct prog *p, int r, int op) {
     switch(op) {
     case I_ADD:
         if (!getregval(m,p,R_A,&exact)) return 0;
-        rr = dadd(exact,src);
-        aa = dscale(rr,m->decimals);
+        if (!dadd(exact,src,&rr) || !dscale(rr,m->decimals,&aa))
+            return numoverflow(m);
         if (!setregval(m,p,R_M,src) || !setregval(m,p,R_R,rr) ||
             !setregval(m,p,R_A,aa)) return 0;
         return 1;
     case I_SUB:
         if (!getregval(m,p,R_A,&exact)) return 0;
-        rr = dsub(exact,src);
-        aa = dscale(rr,m->decimals);
+        if (!dsub(exact,src,&rr) || !dscale(rr,m->decimals,&aa))
+            return numoverflow(m);
         if (!setregval(m,p,R_M,src) || !setregval(m,p,R_R,rr) ||
             !setregval(m,p,R_A,aa)) return 0;
         return 1;
     case I_MUL:
         if (!getregval(m,p,R_A,&exact)) return 0;
-        rr = dmul(exact,src);
-        aa = dscale(rr,m->decimals);
+        if (!dmul(exact,src,&rr) || !dscale(rr,m->decimals,&aa))
+            return numoverflow(m);
         if (!setregval(m,p,R_M,src) || !setregval(m,p,R_R,rr) ||
             !setregval(m,p,R_A,aa)) return 0;
         return 1;
     case I_DIV: {
         struct num q;
         if (!getregval(m,p,R_A,&exact)) return 0;
-        if (!ddiv(exact,src,m->decimals,&q)) {
+        if (dzerop(src)) {
             fprintf(stderr,"division by zero at step %d\n",m->pc+1);
             return 0;
         }
-        rr = dsub(exact,dmul(q,src));
+        if (!ddiv(exact,src,m->decimals,&q)) {
+            return numoverflow(m);
+        }
+        struct num product;
+        if (!dmul(q,src,&product) || !dsub(exact,product,&rr))
+            return numoverflow(m);
         if (!setregval(m,p,R_M,src) || !setregval(m,p,R_A,q) ||
             !setregval(m,p,R_R,rr)) return 0;
         return 1;
@@ -959,7 +802,8 @@ static int printreg(struct machine *m, const struct prog *p, int r) {
     struct num value;
     char text[128];
     if (!getregval(m,p,r,&value)) return 0;
-    dstr(value,m->decimals,r != R_R,text,sizeof(text));
+    if (!dstr(value,m->decimals,r != R_R,text,sizeof(text)))
+        return numoverflow(m);
     printf("%s\t%s\n",regname(r),text);
     return 1;
 }
@@ -1010,12 +854,15 @@ static int execins(struct machine *m, const struct prog *p, struct ins in,
     }
     case I_FRAC:
         if (!getregval(m,p,R_A,&value)) return P101_ERR;
-        value = dfrac(value);
+        if (!dfrac(value,&value)) {
+            numoverflow(m);
+            return P101_ERR;
+        }
         if (!setregval(m,p,R_M,value)) return P101_ERR;
         return nextpc(m,advance);
     case I_ABS:
         if (!getregval(m,p,R_A,&value)) return P101_ERR;
-        if (value.n < 0) value.n = -value.n;
+        value = dabs(value);
         if (!setregval(m,p,R_A,value)) return P101_ERR;
         return nextpc(m,advance);
     case I_ADD: case I_SUB: case I_MUL: case I_DIV:
@@ -1023,9 +870,15 @@ static int execins(struct machine *m, const struct prog *p, struct ins in,
         return nextpc(m,advance);
     case I_SQRT: {
         if (!getregval(m,p,in.reg,&value)) return P101_ERR;
-        struct num root = dsqrt(value,m->decimals);
-        struct num rem = dsub(value,dmul(root,root));
-        if (!setregval(m,p,R_M,dmul(dint(2),root)) ||
+        struct num root, square, rem, twice;
+        if (!dsqrt(value,m->decimals,&root) ||
+            !dmul(root,root,&square) ||
+            !dsub(value,square,&rem) ||
+            !dmul(dint(2),root,&twice)) {
+            numoverflow(m);
+            return P101_ERR;
+        }
+        if (!setregval(m,p,R_M,twice) ||
             !setregval(m,p,R_A,root) || !setregval(m,p,R_R,rem))
             return P101_ERR;
         return nextpc(m,advance);
@@ -1043,7 +896,7 @@ static int execins(struct machine *m, const struct prog *p, struct ins in,
         return jump(m,p,in.target);
     case I_IFPOS:
         if (!getregval(m,p,R_A,&value)) return P101_ERR;
-        if (value.n <= 0) return nextpc(m,advance);
+        if (!dpos(value)) return nextpc(m,advance);
         return jump(m,p,in.target);
     case I_RS:
         if (!rsxchg(m,p)) return P101_ERR;
@@ -1099,6 +952,8 @@ static int rsxchg(struct machine *m, const struct prog *p) {
     if (!setdpair(m,p,r_value,dint(0),false)) return 0;
     return 1;
 }
+
+/* === Cards And Operator Stops === */
 
 static int cardreg(int r) {
     return r >= R_D && r <= R_f;
@@ -1170,7 +1025,7 @@ static int operator_stop(struct machine *m, struct prog *p) {
             can_resume = false;
             continue;
         }
-        if (eq(s,"START") || eq(s,"S")) return resume_stop(m,can_resume);
+        if (eq(s,"START")) return resume_stop(m,can_resume);
         struct num value;
         if (dparse(s,&value)) {
             if (!setregval(m,p,R_M,value)) return P101_ERR;
@@ -1193,7 +1048,7 @@ static int operator_stop(struct machine *m, struct prog *p) {
         if (in.op == I_GOTO) return jump(m,p,in.target);
         if (in.op == I_IFPOS) {
             if (!getregval(m,p,R_A,&value)) return P101_ERR;
-            if (value.n > 0) return jump(m,p,in.target);
+            if (dpos(value)) return jump(m,p,in.target);
             return resume_stop(m,can_resume);
         }
         fprintf(stderr,"invalid operator input: %s\n",s);
@@ -1203,7 +1058,7 @@ static int operator_stop(struct machine *m, struct prog *p) {
 }
 
 static int startpoint(const struct prog *p, const char *text) {
-    char line[MAX_LINE], key[MAX_NAME*2], target[MAX_NAME];
+    char line[MAX_LINE], key[MAX_NAME*2];
     snprintf(line,sizeof(line),"%s",text);
     if (!keyfromline(line,key,sizeof(key))) {
         fprintf(stderr,"invalid start origin %s\n",text);
@@ -1224,9 +1079,8 @@ static int startpoint(const struct prog *p, const char *text) {
         fprintf(stderr,"--start requires an unconditional origin or reference point\n");
         return -1;
     }
-    snprintf(target,sizeof(target),"%s",in.target);
-    int pc = findlabel(p,target);
-    if (pc < 0) fprintf(stderr,"unknown label %s\n",target);
+    int pc = findlabel(p,in.target);
+    if (pc < 0) fprintf(stderr,"unknown label %s\n",in.target);
     return pc;
 }
 
@@ -1240,7 +1094,6 @@ static int step(struct machine *m, struct prog *p) {
 /* Initialize machine state and run until stop, error, or end of program. */
 static int run(struct prog *p, const char *start, FILE *input) {
     struct machine m;
-    int rc;
     memset(&m,0,sizeof(m));
     m.decimals = p->decimals;
     m.input = input;
@@ -1251,12 +1104,14 @@ static int run(struct prog *p, const char *start, FILE *input) {
         return 0;
     }
     while(m.pc >= 0 && m.pc < p->nins) {
-        rc = step(&m,p);
+        int rc = step(&m,p);
         if (rc == P101_STOP) return 1;
         if (rc == P101_ERR) return 0;
     }
     return 1;
 }
+
+/* === Command Line === */
 
 static void usage(FILE *fp) {
     fprintf(fp,"Usage: p101 [--start ORIGIN] [--input FILE] program.p101\n");

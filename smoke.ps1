@@ -106,6 +106,19 @@ A #
 $wheelOutput = Invoke-P101 -InputValues @("1", "8") -ArgsList @($wheel)
 Assert-Matches $wheelOutput "A\s+0,125" "decimal wheel"
 
+$fixedPrint = Join-Path $Tmp "fixed-print.p101"
+@"
+.wheel 2
+.init B 3
+A V
+B #
+  S
+  >A
+A #
+"@ | Set-Content -NoNewline -Encoding ascii $fixedPrint
+$fixedOutput = Invoke-P101 -InputValues @("4.5") -ArgsList @($fixedPrint)
+Assert-Matches $fixedOutput "B\s+3,00[\s\S]*A\s+4,50" "fixed decimal printing"
+
 $cardA = Join-Path $Tmp "card-a.p101"
 @"
 .wheel 0
@@ -144,6 +157,9 @@ Invoke-P101Failure -InputValues @("5") -ArgsList @($rsProtected) `
 
 Invoke-P101Failure -InputValues @("not-a-number") -ArgsList @("examples/factorial.p101") `
     -Pattern "invalid input: not-a-number" -Name "invalid input"
+
+Invoke-P101Failure -InputValues @("1 2") -ArgsList @("examples/factorial.p101") `
+    -Pattern "invalid input: 1 2" -Name "embedded numeric whitespace"
 
 $sqrt = Join-Path $Tmp "sqrt2.p101"
 @"
@@ -185,6 +201,31 @@ B <M
 "@ | Set-Content -NoNewline -Encoding ascii $rightHalfOverflow
 Invoke-P101Failure -InputValues @("123456789012") -ArgsList @($rightHalfOverflow) `
     -Pattern "register B capacity exceeded" -Name "right half capacity"
+
+$mulR = Join-Path $Tmp "mul-r.p101"
+@"
+.wheel 0
+.init A 99999999999.99999999999
+.init B 99999999999.99999999999
+A V
+B x
+R #
+"@ | Set-Content -NoNewline -Encoding ascii $mulR
+$mulROutput = Invoke-P101 -InputValues @("") -ArgsList @($mulR)
+Assert-Matches $mulROutput "R\s+9999999999999999999998,0000000000000000000001" `
+    "44-digit multiply result"
+
+$mulOverflow = Join-Path $Tmp "mul-overflow.p101"
+@"
+.wheel 0
+.init A 99999999999999999999999
+.init B 9999999999999999999999
+A V
+B x
+R #
+"@ | Set-Content -NoNewline -Encoding ascii $mulOverflow
+Invoke-P101Failure -InputValues @("") -ArgsList @($mulOverflow) `
+    -Pattern "register R capacity exceeded .*45 digits" -Name "multiply capacity"
 
 $overlay = Join-Path $Tmp "overlay-clear.p101"
 @"

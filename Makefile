@@ -14,8 +14,8 @@ TARGET := p101$(EXE)
 
 all: $(TARGET)
 
-$(TARGET): p101.c
-	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+$(TARGET): p101.c num.c num.h
+	$(CC) $(CFLAGS) -o $@ p101.c num.c $(LDFLAGS)
 
 clean:
 	$(RM) $(TARGET)

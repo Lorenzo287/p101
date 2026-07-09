@@ -7,14 +7,13 @@
 
 #include "num.h"
 
-#define CORE_INS 48      // instructions stored in p1, p2
-#define MAX_INS 120      // extended with D, E, F
+#define CORE_INS 48  // instructions stored in p1, p2
+#define MAX_INS 120  // extended with D, E, F
 #define OVERFLOW_HALF_INS 12  // instruction slots in one D/E/F half-register
 #define MAX_LABELS 128
 
 #define MAX_LINE 256
 #define MAX_NAME 32
-#define MAX_KEY_TOKENS 2
 #define MAX_DIRECTIVE_TOKENS 3
 
 static bool clicolor;
@@ -33,7 +32,7 @@ enum reg {
 enum op {
     I_MARK, I_INPUT, I_LIT, I_LITDIG, I_STORE, I_LOAD, I_SWAP,
     I_FRAC, I_ABS, I_ADD, I_SUB, I_MUL, I_DIV, I_SQRT,
-    I_CLEAR, I_PRINT, I_NL, I_GOTO, I_IFPOS, I_RS
+    I_CLEAR, I_PRINT, I_NL, I_GOTO, I_CONDJ, I_RS
 };
 
 /* One parsed program instruction. */
@@ -519,7 +518,7 @@ static int decodekey(const char *key, int line, struct ins *in) {
     in->lit_digit = -1;
     bool conditional;
     if (jumptarget(key,&conditional,in->target)) {
-        in->op = conditional ? I_IFPOS : I_GOTO;
+        in->op = conditional ? I_CONDJ : I_GOTO;
         return 1;
     }
     if (!strcmp(key,"RS")) {
@@ -608,22 +607,21 @@ static int directive(struct prog *p, char **tokens, int ntok, int line) {
 
 /* Parse one normalized key chord into a stored program instruction. */
 static int parsekey(struct prog *p, const char *key, int line) {
+    struct ins in;
     if (refpoint(key)) {
-        struct ins in;
         memset(&in,0,sizeof(in));
+        in.op = I_MARK;
         in.reg = R_M;
         in.line = line;
         in.lit_digit = -1;
         if (!addlabel(p,key,p->nins,line)) return 0;
-        in.op = I_MARK;
-        return addins(p,in);
+		return addins(p,in);
     }
-    struct ins in;
-    if (!decodekey(key,line,&in)) {
-        error_msg(clicolor,"line %d: cannot parse key chord %s\n",line,key);
-        return 0;
+    if (decodekey(key,line,&in)) {
+		return addins(p,in);
     }
-    return addins(p,in);
+    error_msg(clicolor,"line %d: cannot parse key chord %s\n",line,key);
+    return 0;
 }
 
 static int tokwords(char *s, char **tokens, int tokmax) {
@@ -637,30 +635,16 @@ static int tokwords(char *s, char **tokens, int tokmax) {
     return ntok;
 }
 
-static void upper_routine_key(char *key) {
-    if (key[0] && !key[1]) {
-        char c = (char)toupper((unsigned char)key[0]);
-        if (routine(c)) key[0] = c;
-    }
-}
-
-static int keyfromline(char *line, char *key, size_t size) {
+static int linectrlkey(char *line) {
     char *comment = strchr(line,';');
     if (comment) *comment = '\0';
     line = trim(line);
     if (!line[0]) return 0;
-    char *tokens[MAX_KEY_TOKENS];
-    int ntok = tokwords(line,tokens,MAX_KEY_TOKENS);
-    if (ntok <= 0) return 0;
-    if (ntok == 1) {
-        snprintf(key,size,"%s",tokens[0]);
-        upper_routine_key(key);
-        return 1;
-    }
-    if (ntok == 2) {
-        snprintf(key,size,"%s%s",tokens[0],tokens[1]);
-        upper_routine_key(key);
-        return 1;
+    char *tokens[1];
+    if (tokwords(line,tokens,1) != 1) return 0;
+    if (tokens[0][0] && !tokens[0][1]) {
+        int key = toupper((unsigned char)tokens[0][0]);
+        if (key == 'S' || routine(key)) return key;
     }
     return 0;
 }
@@ -907,7 +891,7 @@ static int execins(struct machine *m, const struct prog *p, struct ins in,
         return nextpc(m,advance);
     case I_GOTO:
         return jump(m,p,in.target);
-    case I_IFPOS:
+    case I_CONDJ:
         if (!getregval(m,p,R_A,&value)) return P101_ERR;
         if (!dpos(value)) return nextpc(m,advance);
         return jump(m,p,in.target);
@@ -972,16 +956,20 @@ static int cardreg(int r) {
     return r >= R_D && r <= R_f;
 }
 
-static void set_used_splits(struct machine *m, const struct prog *p, bool card_only) {
-    int first = card_only ? 2 : 0;
+/* Set split state for every splittable register.
+ * Preserve B and C state when loading a card at runtime. */ 
+static void set_used_splits(struct machine *m, const struct prog *p, bool card_load) {
+    int first = card_load ? 2 : 0;
     for (int j = first; j < 5; j++)
         if (p->instused[rightreg(j)] || p->instused[leftreg(j)] || p->hasinit[leftreg(j)])
             m->split[j] = true;
 }
 
-static int apply_initial_regs(struct machine *m, const struct prog *p, bool card_only) {
+/* Initialize registers with prog metadata.
+ * Preserve B and C when loading a card at runtime */
+static int apply_initial_regs(struct machine *m, const struct prog *p, bool card_load) {
     for (int j = 0; j < R_COUNT; j++)
-        if (p->hasinit[j] && (!card_only || cardreg(j)) &&
+        if (p->hasinit[j] && (!card_load || cardreg(j)) &&
             !setregval(m,p,j,p->init[j])) return 0;
     return 1;
 }
@@ -1024,7 +1012,7 @@ static int resume_stop(struct machine *m, bool can_resume) {
 }
 
 static int operator_stop(struct machine *m, struct prog *p) {
-    char line[MAX_LINE], copy[MAX_LINE], key[MAX_NAME*2], *s, *comment, *arg;
+    char line[MAX_LINE], copy[MAX_LINE], *s, *comment, *arg;
     bool can_resume = m->pc >= 0 && m->pc < p->nins;
 	printf("S  ");
     while(fgets(line,sizeof(line),m->input)) {
@@ -1050,55 +1038,32 @@ static int operator_stop(struct machine *m, struct prog *p) {
             return resume_stop(m,can_resume);
         }
         snprintf(copy,sizeof(copy),"%s",s);
-        if (!keyfromline(copy,key,sizeof(key))) {
+        int key = linectrlkey(copy);
+        if (!key) {
             error_msg(true,"invalid input: %s\n",s);
             return P101_ERR;
         }
-        if (refpoint(key)) {
-            return jump(m,p,key);
-        }
-        struct ins in;
-        if (!decodekey(key,0,&in)) {
-            error_msg(true,"invalid input: %s\n",s);
-            return P101_ERR;
-        }
-        if (in.op == I_INPUT) return resume_stop(m,can_resume);
-        if (in.op == I_GOTO) return jump(m,p,in.target);
-        if (in.op == I_IFPOS) {
-            if (!getregval(m,p,R_A,&value)) return P101_ERR;
-            if (dpos(value)) return jump(m,p,in.target);
-            return resume_stop(m,can_resume);
-        }
-        error_msg(true,"invalid operator input: %s\n",s);
-        return P101_ERR;
+        if (key == 'S') return resume_stop(m,can_resume);
+        char label[4];
+        snprintf(label,sizeof(label),"A%c",key);
+        return jump(m,p,label);
     }
     return P101_STOP;
 }
 
 static int startpoint(const struct prog *p, const char *text) {
-    char line[MAX_LINE], key[MAX_NAME*2];
+    char line[MAX_LINE];
     snprintf(line,sizeof(line),"%s",text);
-    if (!keyfromline(line,key,sizeof(key))) {
-        error_msg(true,"invalid start origin %s\n",text);
+    int key = linectrlkey(line);
+    if (!key || key == 'S') {
+        error_msg(true,"--start requires routine key V, W, Y, or Z\n");
         return -1;
     }
-    if (!key[1] && routine(key[0])) {
-        int pc = entry(p,key[0]);
-        if (pc < 0) error_msg(true,"no entry point for %c\n",key[0]);
-        return pc;
-    }
-    if (refpoint(key)) {
-        int pc = findlabel(p,key);
-        if (pc < 0) error_msg(true,"unknown label %s\n",key);
-        return pc;
-    }
-    struct ins in;
-    if (!decodekey(key,0,&in) || in.op != I_GOTO) {
-        error_msg(true,"--start requires an unconditional origin or reference point\n");
+    int pc = entry(p,key);
+    if (pc < 0) {
+        error_msg(true,"no entry point for %c\n",key);
         return -1;
     }
-    int pc = findlabel(p,in.target);
-    if (pc < 0) error_msg(true,"unknown label %s\n",in.target);
     return pc;
 }
 
@@ -1132,7 +1097,7 @@ static int run(struct prog *p, const char *start, FILE *input) {
 /* === Command Line === */
 
 static void usage(FILE *fp) {
-    fprintf(fp,"Usage: p101 [--start ORIGIN] [--input FILE] program.p101\n");
+    fprintf(fp,"Usage: p101 [--start KEY] [--input FILE] program.p101\n");
 }
 
 int main(int argc, char **argv) {

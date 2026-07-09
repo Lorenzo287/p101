@@ -90,8 +90,8 @@ A #
 B V
 B #
 "@ | Set-Content -NoNewline -Encoding ascii $origin
-$originOutput = Invoke-P101 -InputValues @("") -ArgsList @("--start", "CV", $origin)
-Assert-Matches $originOutput "B\s+9" "full start origin"
+Invoke-P101Failure -InputValues @("") -ArgsList @("--start", "CV", $origin) `
+    -Pattern "--start requires routine key" -Name "reject full start origin"
 
 $wheel = Join-Path $Tmp "decimal-wheel.p101"
 @"

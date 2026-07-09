@@ -110,9 +110,8 @@ prefix is optional and omitted, it defaults to `M`; for example, `>A` loads
 Let `KEY` be one of `V`, `W`, `Y`, or `Z`. Reference points are labels:
 `A KEY`, `A/ KEY`, `B KEY`, `B/ KEY`, `E KEY`, `E/ KEY`, `F KEY`, and
 `F/ KEY`. The command-line entry point `--start V` starts at `A V`,
-`--start W` starts at `A W`, and so on. `--start` also accepts full
-unconditional origins such as `C W`/`CW`, and direct reference points such as
-`A W`/`AW`.
+`--start W` starts at `A W`, and so on. `--start` accepts only the routine
+keys `V`, `W`, `Y`, and `Z`.
 
 Unconditional jumps are written as `KEY`, `C KEY`, `D KEY`, or `R KEY`;
 they target `A KEY`, `B KEY`, `E KEY`, and `F KEY` respectively.
@@ -126,8 +125,8 @@ the next instruction.
 
 `S` stops and releases the operator transcript. A bare numeric input value is
 stored in `M` and execution continues after `S`. `START` or `S` restarts
-without entering a new number. Routine and jump origins such as `W`, `C W`, or
-`D Z` resume from the selected reference point.
+without entering a new number. Routine keys `V`, `W`, `Y`, and `Z` resume from
+the corresponding `A` reference point.
 
 `CARD FILE` loads another program card, preserving `M`, `A`, `R`, `B`, `C`,
 and the decimal-wheel setting while refreshing `D`, `E`, `F`, and their splits
@@ -214,8 +213,8 @@ use either `.` or `,` as the decimal separator.
 
 ## CLI Options
 
-- `--start ORIGIN`: select the start origin or reference point; default is
-  `V`. Examples: `W`, `CW`, `AW`.
+- `--start KEY`: select the routine key to start from; default is `V`.
+  Accepted keys are `V`, `W`, `Y`, and `Z`.
 - `--input FILE`: read operator transcript items from a file.
 
 ## Chaining Example

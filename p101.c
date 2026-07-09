@@ -29,6 +29,8 @@ enum reg {
     R_COUNT
 };
 
+#define R_SPLITTABLE_COUNT 5
+
 enum op {
     I_MARK, I_INPUT, I_LIT, I_LITDIG, I_STORE, I_LOAD, I_SWAP,
     I_FRAC, I_ABS, I_ADD, I_SUB, I_MUL, I_DIV, I_SQRT,
@@ -67,14 +69,19 @@ struct prog {
     int decimals;
 };
 
-/* Runtime state for one program execution. */
+/* Runtime state for one program execution. 
+ * The rs_* fields are for the RS exchange op during chaining. 
+ *
+ * WARN: The field order in not optimal for size, but this
+ * is more readable and the difference is negligigle. */
 struct machine {
     struct num reg[R_COUNT];
-    struct num rs_right, rs_left;
-    bool split[5];
-    bool rs_saved, rs_split, rs_protected;
+    bool split[R_SPLITTABLE_COUNT];
     int pc, decimals;
     FILE *input;
+	// RS exchange
+    struct num rs_right, rs_left;
+    bool rs_saved, rs_split, rs_protected;
 };
 
 /* === Text Helpers === */
